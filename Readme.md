@@ -26,12 +26,18 @@ Rule 2:  If requested version < current version, do nothing.
 Logging is sent to journalctl with various messages indicating what was actually done.
 
 Return Codes:
+
 0 - Successfully installed or already installed.  Log provides details.
-1 = Something nasty happened
+
+1 = Something nasty happened.
+
 64 - No module was specified.
+
 65 - Only one module can be specified.
-66 - Unsupported Conditional
-67 - Pip3 could not handle the request
+
+66 - Unsupported Conditional.
+
+67 - Pip3 could not handle the request.
 
 Logging is sent to journalctl with various messages indicating what was actually done.
 

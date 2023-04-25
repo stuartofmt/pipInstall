@@ -22,6 +22,7 @@ Rule 1:  If requested version is > current version, install requested version.
 Rule 2:  If requested version < current version, do nothing
 
 Return Codes:
+
 0 - Successfully installed or already installed.  Details are sent to journalctl
 1 = Something nasty happened
 64 - No module was specified.
