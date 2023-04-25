@@ -55,5 +55,7 @@ sudo chown dsf:dsf /opt/dsf/bin/pip3_install.py
 
 The following entries are expected in `/opt/dfs/conf/plugins.json`
 
-  ```"InstallPythonPackageCommand": "/opt/dsf/bin/pip3_install.py",
-  "InstallPythonPackageArguments": "{package}",```
+  ```
+  "InstallPythonPackageCommand": "/opt/dsf/bin/pip3_install.py",
+  "InstallPythonPackageArguments": "{package}",
+  ```
