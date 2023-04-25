@@ -30,6 +30,8 @@ Return Codes:
 66 - Unsupported Conditional
 67 - Pip3 could not handle the request
 
+Verson 1.0.1
+Initial Release
 
 """
 import subprocess
