@@ -17,8 +17,6 @@ If a version number condition is supplied it must use one of the following forms
 
 Note `~=` will be converted to `>=`.  Multiple conditionals as well as `>` and `<` are not supported.
 
-Inbuild modules are checked and reported as successfully installed.
-
 Logical rules are applied as follows:
 
 Rule 1:  If requested version is > current version, install requested version.
@@ -40,8 +38,6 @@ Return Codes:
 66 - Unsupported Conditional.
 
 67 - Pip3 could not handle the request.
-
-Logging is sent to journalctl with various messages indicating what was actually done.
 
 ## Tested in the following DSF environment using DSF 3.5.3
 
