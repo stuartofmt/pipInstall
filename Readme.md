@@ -1,7 +1,9 @@
 # Python3 package installer for DSF
 
 A python script to install python package dependencies for DSF plugins.
-Reporting success on built-in modules.
+
+Reports success on built-in modules.
+
 Provides logic to (hopefully) avoid version conflicts due to different plugin requirements by installing the latest versions.
 
 Uses pip3 (expected to be on path) and accepts pip3 version requests.
@@ -13,7 +15,7 @@ Expects a single module name with or without a version number condition.
 If a version number condition is supplied it must use one of the following forms
 `==` , `>=` , `<=` , `~=`
 
-Note `~=` will be converted to `>=`
+Note `~=` will be converted to `>=`.  Multiple conditionals as well as `>` and `<` are not supported.
 
 Inbuild modules are checked and reported as successfully installed.
 

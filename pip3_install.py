@@ -57,6 +57,9 @@ def parseArguments(request):      ##### Get the module name any conditional and 
     regex = '(.+)(' + conditionals + ')(.+)'
     result = re.findall(regex,request)
     if len(result) == 0: #  no conditional version
+        if '>' in request or '<' in request:
+            logger.info('Unsupported Conditional. ' + request)
+            sys.exit(66)
         result = []
         result = [(request, '>=', '0')] # Any version
 
