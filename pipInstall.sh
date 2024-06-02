@@ -1,5 +1,8 @@
 #!/bin/bash
 
+#Simplified Version - does not include safeguards / handling
+#provided by the python script pipInstall.py 
+
 #Called with two arguments
 #first - module/version to be installed
 #second - plugin name
