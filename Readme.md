@@ -57,6 +57,10 @@ Unsupported Conditional.
 
 pip could not handle the request.
 
+#  Note: python scripts in Duet3d plugins need to have a shebang
+ 
+#!/opt/dsf/plugins/`<plugin name>`/venv/bin/python -u  
+
 ## Tested in the following DSF environment using DSF 3.5.0x
 
 Installed as:
@@ -69,7 +73,7 @@ sudo chmod 744 /opt/dsf/bin/pipInstall.py
 
 sudo chown dsf:dsf /opt/dsf/bin/pipInstall.py
 
-The following entry are expected in `/opt/dfs/conf/plugins.json`
+The following entry is expected in `/opt/dfs/conf/plugins.json`
 
   ```
   "InstallPythonPackageCommand": "/opt/dsf/bin/pipInstall.py",
