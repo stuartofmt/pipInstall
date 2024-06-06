@@ -7,15 +7,12 @@ Install python modules and create a virtual environment for the plugin.
 # Released under The MIT License. Full text available via https://opensource.org/licenses/MIT
 
 Useage:
-Usage pipInstall.py <module name> <plugin name>
+Usage pipInstall.py -m <manifest file> -p <plugin path>
 
-Expects a single module name (with or without version number) and the plugin name
+Both <manifest file. and <plugin path> are fully qualified
 
-If <plugin name> is provided: A virtual environment will be created for the plugin at
-pluginPath/<plugin name>/venv (see pluginPath below)
-
-If <plugin name > is not provided: installation will be to the OS default environment.
-This is NOT recommended but is included to provide backward compatibility
+A virtual environment will be created for python at
+<plugin Path>/VENV_FOLDER   (see constant section)
 
 If version number is supplied it must use one of the following comparisons:
 ==
@@ -29,36 +26,22 @@ Version numbers specifying max / min ranges are not supported
 
 Rules (executed in order):
 Try to install unless:
-    In all cases:
         1. If the module is a Built-In ==> do nothing
-    If installing into the default OS environment
-        2. If the module is not installed ==> try to Install
-        3. If module is installed and no version given ==> do nothing
-           prevents accidental breaking of another plugin
-           can be over-ridden by supplying version info
-        4. If installed version >= requested version ==> do nothing 
 
 Note: If a module is already installed but failes reinstall / update
       The occurence is logged and the install request is considered successful        
 
 Return Codes:
 
-0 - Successfully installed or already installed.  Details are sent to journalctl
-1 = Something nasty happened
+0 - All modules successfully installed or already installed.
+1 = Something nasty happened or one or more modules could not be installed
 
 Verson:
 1.0.0
 Initial Release
-1.0.2
-Added additional check to function pipinstalled.  Uses pip list because some modules do not show up in global list
-2.0.0
-Added support for virtual environments
- - separate rules for system env and venv
-Added normalization of module names according to pip standard
-Added better handling for installed modules that cannot be upgraded
-Simplified return codes
-Improved logging
 """
+
+
 import subprocess
 import sys
 import logging
@@ -66,10 +49,21 @@ from pkg_resources import parse_version as version
 import re
 import os
 import sysconfig
+import argparse
+import json
 
-# Configuration Variables
-pluginPath = '/opt/dsf/plugins'
-pythonVersion = 'python'  #Possible future use with additional input of specific version
+# CONSTANTS
+VENV_FOLDER = 'venv'
+MANIFEST_KEY = 'sbcPythonDependencies'
+PIP = 'pip'
+
+if os.name == 'nt': # Windows
+    BIN_DIR = 'Scripts'
+    PYTHON_VERSION = 'python.exe'
+else:
+    BIN_DIR = 'bin'
+    PYTHON_VERSION = 'python'
+
 
 def createLogger(logname):   ##### Create a custom logger so messages go to journalctl#####
     global logger
@@ -81,6 +75,37 @@ def createLogger(logname):   ##### Create a custom logger so messages go to jour
     c_handler.setFormatter(c_format)
     logger.addHandler(c_handler)
     logger.setLevel(logging.DEBUG)
+
+def validateParams():
+    parser = argparse.ArgumentParser(
+            description='pipInstall2',
+            allow_abbrev=False)
+    # Environment
+    parser.add_argument('-m', type=str, nargs=1, default=[],
+                        help='module path')
+    parser.add_argument('-p', type=str, nargs=1, default=[], help='plugin path')
+
+    args = vars(parser.parse_args())  # Save as a dict
+
+    mFile = args['m'][0]
+    pPath = args['p'][0]
+
+    if mFile is None:
+        logger.info('Exiting: No manifest file (-m) was provided')
+        sys.exit(1)
+    elif not os.path.isfile(mFile):
+        logger.info('Exiting: Manifest file ' +mFile + 'does not exist')
+        sys.exit(1)
+
+    if pPath is None:
+        logger.info('Exiting: No plugin path (-p) was provided')
+        sys.exit(1)
+    elif not os.path.isdir(pPath):    
+        logger.info('Exiting: Manifest file ' +mFile + 'does not exist')
+        sys.exit(1)
+        
+    return mFile, pPath
+
 
 def validateArguments():
     numArgs = len(sys.argv)
@@ -133,16 +158,19 @@ def runsubprocess(cmd):
                 return False
         return result.stdout
     except subprocess.CalledProcessError as e1:
-        logger.info('ProcessError -- ' + str(e1))
+        pass
+        #logger.info('ProcessError -- ' + str(e1))  #  Supress this error 
     except OSError as e2:
         logger.info('OSError -- ' + str(e2))
     return False
 
 def createPythonEnv(envPath):
-    if os.path.exists(envPath+'/bin/' + pythonVersion): # No need to recreate
+    pythonFile = os.path.normpath(os.path.join(envPath,BIN_DIR,PYTHON_VERSION))
+    print(pythonFile)
+    if os.path.isfile(pythonFile): # No need to recreate
         return
 
-    cmd = pythonVersion + ' -m venv --system-site-packages  ' + envPath
+    cmd = PYTHON_VERSION + ' -m venv --system-site-packages  ' + envPath
     logger.info('Creating Python Virtual Environment at: ' + envPath)
     result = runsubprocess(cmd)
     if result != '':
@@ -150,6 +178,17 @@ def createPythonEnv(envPath):
         logger.info(result)
         sys.exit(1)
     return
+
+def getModuleList(mFile):
+    with open(mFile) as jsonfile:
+        config = json.load(jsonfile)
+
+    mList = config[MANIFEST_KEY]
+
+    for i in mList:
+        print(i)
+
+    return mList
 
 def getInstalledVersion(m,envPath ):
     # If installed by pip and not a built-in - should return version number
@@ -166,10 +205,8 @@ def getInstalledVersion(m,envPath ):
         return 'Built-In'
 
     except ImportError: #  Check to see if pip thinks its installed
-        if envPath == '':
-            cmd = 'python -m pip list'
-        else:
-            cmd = envPath + '/bin/' + pythonVersion + ' -m pip list'
+        pythonFile = os.path.normpath(os.path.join(envPath,BIN_DIR,PYTHON_VERSION))
+        cmd = pythonFile + ' -m ' + PIP + ' list'
 
         request = runsubprocess(cmd)
         if request is False:
@@ -195,10 +232,8 @@ def installModule(mRequest, mVersion, envPath):
     upgrade = ''
     if mVersion == '':
         upgrade = ' --upgrade '
-    if envPath == '':
-        cmd = pythonVersion + ' -m pip install --no-cache-dir ' + upgrade +  '"' + mRequest + '"' 
-    else:
-        cmd = envPath + '/bin/'+ pythonVersion + ' -m pip install --no-cache-dir ' + upgrade +  '"' + mRequest + '"' 
+    pythonFile = os.path.normpath(os.path.join(envPath,BIN_DIR,PYTHON_VERSION))
+    cmd = pythonFile + ' -m ' + PIP + ' install --no-cache-dir ' + upgrade +  '"' + mRequest + '"' 
 
     result = runsubprocess(cmd)
     if result == False:  # module could not be installed
@@ -206,87 +241,81 @@ def installModule(mRequest, mVersion, envPath):
 
     return True
 
+def installModules(mList,envPath):
+    sList = []
+    fList = []
+    for requestedVersion in mList:
+        # Get the elements of the requested module - parseVersion may modify
+        mName, mCompare, mVersion = parseVersion(requestedVersion)
+        # Change to canonical name
+        mName = mName.lower()
+        mName = mName.replace('-','_')
+        mName = mName.replace('.','_')
+        mRequested = mName+mCompare+mVersion
+
+        logger.info('Checking for python module: ' + mRequested)
+
+        # Check to see what is installed
+        installedVersion = getInstalledVersion(mName, envPath)
+
+        #  Determine next action
+        if installedVersion == 'Built-In': # Rule 1
+            resultCode = 2
+        else:
+            installOk = installModule(mRequested, mVersion, envPath)
+            if installOk:
+                resultCode = 1
+            elif installedVersion not in ['Built_in','None']:
+                resultCode = 4
+            else:
+                resultCode = 3
+
+        # Exit the program with appropriate log entries
+        if resultCode == 0:
+            sList.append('Module "' + mRequested + '" is already installed')
+        elif resultCode == 1:
+            sList.append('Module "' + mName + '" was installed or updated to version ' +  getInstalledVersion(mName, envPath))
+        elif resultCode == 2:
+            sList.append('Module "' + mName + '" is a built-in.')
+        elif resultCode == 3:
+            fList.append('Module "' + mRequested + '" could not be installed.')
+        elif resultCode == 4:
+            sList.append('Module "' + mName + '" was not updated from version ' + installedVersion)
+        else:
+            logger.info('An unexpected error occured')
+            sys.exit(1)
+
+    return sList, fList
+
 def main(progName):
-    # Set up logging so journalc can be used
+    #  Set up logging so journalc can be used
     createLogger(progName)
 
     #  Validate that the call was well formed and get the arguments
-    requestedVersion, pluginName = validateArguments()
-    # Change ro canonical name
-    requestedVersion = requestedVersion.lower()
-    requestedVersion = requestedVersion.replace('.','_')
-    requestedVersion = requestedVersion.replace('-','_')
+    manifestFile, pluginPath = validateParams()
+    venvPath = os.path.normpath(os.path.join(pluginPath,VENV_FOLDER))
 
-    if pluginName != '':
-        #setup python virtual environment
-        venvPath = pluginPath + '/' + pluginName + '/venv'
-        createPythonEnv(venvPath)
-    else:
-        venvPath = '' # Install to system default
+    #  Create virtual environment
+    createPythonEnv(venvPath)
 
-    # Get the elements of the requested module - parseVersion may modify
-    mName, mCompare, mVersion = parseVersion(requestedVersion)
-    mRequested = mName+mCompare+mVersion
+    # parse the manifestfile
+    moduleList = getModuleList(manifestFile)
 
-    logger.info('Checking for python module: ' + mRequested)
-    if pluginName == '':
-        logger.info('in System Environment')
-    else:
-        logger.info('in Virtual Environment: ' + venvPath)
+    # Install the modules
+    successList = []
+    failList = []    
+    successList, failList = installModules(moduleList,venvPath)
 
-    # Check to see what is installed
-    installedVersion = getInstalledVersion(mName, venvPath)
-    logger.info('Currently installed: '+ installedVersion)
+    if len(successList) > 0:
+        logger.info('The following modules were installed or updated:')
+        for entry in successList:
+            logger.info(entry)
 
-    #  Determine next action according to Rules
-    #  Positionally sensitive
-    tryInstall = True
-    if pluginName == '':  # System env rules
-        if installedVersion == 'Built-In': # Rule 1
-            resultCode = 2
-            tryInstall = False
-        elif installedVersion == 'None':   # Rule 2
-            pass
-        elif mVersion == '':               # Rule 3
-            resultCode = 0
-            tryInstall = False
-        elif version(installedVersion) >= version(mVersion):
-            resultCode = 0                 # Rule 4
-            tryInstall = False
-
-    else:  #Venv Rules 
-        if installedVersion == 'Built-In': # Rule 1
-            resultCode = 2
-            tryInstall = False
-
-    if tryInstall:
-        installOk = installModule(mRequested, mVersion, venvPath)
-        if installOk:
-            resultCode = 1
-        elif installedVersion not in ['Built_in','None']:
-            resultCode = 4
-        else:
-           resultCode = 3
-
-    # Exit the program with appropriate log entries
-    if resultCode == 0:
-        logger.info('Module already installed')
-        sys.exit(0) #Success
-    elif resultCode == 1:
-        logger.info('Module ' + mName + ' was installed or updated to version ' +  getInstalledVersion(mName, venvPath))
-        sys.exit(0) #Success
-    elif resultCode == 2:
-        logger.info('Module is a built-in. Nothing to install.')
-        sys.exit(0) #Success
-    elif resultCode == 3:
-        logger.info('Module ' + mRequested + ' could not be installed.')
-        logger.info('Check the module name and version number(if provided).')
-        sys.exit(1)
-    elif resultCode == 4:
-        logger.info('Unable to update module: Still at version ' + installedVersion)
-    else:
-        logger.info('An unexpected error occured')
-        sys.exit(1)
+    if len(failList) > 0:
+        logger.info('The following modules could not be installed:')
+        for entry in failList:
+            logger.info(entry)
+            sys.exit(1)
 
 if __name__ == "__main__":  # Do not run anything below if the file is imported by another program
     programName = sys.argv[0]
