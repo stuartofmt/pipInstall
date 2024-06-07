@@ -106,28 +106,6 @@ def validateParams():
         
     return mFile, pPath
 
-
-def validateArguments():
-    numArgs = len(sys.argv)
-    if numArgs <= 1:
-        logger.info('No module was specified: ' + str(sys.argv))
-        sys.exit(1)
-    elif numArgs == 2:
-        # Need 3 arguments for externally managed environments
-        EMFile = sysconfig.get_path("stdlib", sysconfig.get_default_scheme()) + '/EXTERNALLY-MANAGED'
-        if os.path.isfile(EMFile):
-            logger.info('OS does not allow install to System Python - Exiting')
-            sys.exit(1)
-        reqVersion = sys.argv[1]
-        pName = ''
-    elif numArgs == 3:
-        reqVersion = sys.argv[1]
-        pName  = sys.argv[2]
-    elif numArgs > 3:
-        logger.info('Too many arguments.' + str(sys.argv))
-        sys.exit(1)
-    return  reqVersion, pName
-
 def parseVersion(request):
 # Get the module name any conditional and version
     if ',' in request:
@@ -166,7 +144,6 @@ def runsubprocess(cmd):
 
 def createPythonEnv(envPath):
     pythonFile = os.path.normpath(os.path.join(envPath,BIN_DIR,PYTHON_VERSION))
-    print(pythonFile)
     if os.path.isfile(pythonFile): # No need to recreate
         return
 
@@ -185,20 +162,12 @@ def getModuleList(mFile):
 
     mList = config[MANIFEST_KEY]
 
-    for i in mList:
-        print(i)
-
     return mList
 
 def getInstalledVersion(m,envPath ):
-    # If installed by pip and not a built-in - should return version number
-    # If installed but no version number return 0
-    # If not installed return -1
-    # If a built-in return ''
     try:
         globals()[m] = __import__(m)  #Will likely not work if alternate python versions allowed in future
         result = globals()[m].__version__
-        #logger.info('System Version is: ' + result)
         return result
 
     except AttributeError: # No version number
@@ -307,11 +276,13 @@ def main(progName):
     successList, failList = installModules(moduleList,venvPath)
 
     if len(successList) > 0:
+        logger.info('-----------------------------------------------')
         logger.info('The following modules were installed or updated:')
         for entry in successList:
             logger.info(entry)
 
     if len(failList) > 0:
+        logger.info('---------------------------------------------')
         logger.info('The following modules could not be installed:')
         for entry in failList:
             logger.info(entry)
