@@ -94,7 +94,7 @@ def validateParams():
         logger.info('Exiting: No manifest file (-m) was provided')
         sys.exit(1)
     elif not os.path.isfile(mFile):
-        logger.info('Exiting: Manifest file ' +mFile + 'does not exist')
+        logger.info('Exiting: Manifest file ' +mFile + ' does not exist')
         sys.exit(1)
 
     if pPath is None:
@@ -158,7 +158,12 @@ def createPythonEnv(envPath):
 
 def getModuleList(mFile):
     with open(mFile) as jsonfile:
-        config = json.load(jsonfile)
+        try:
+            config = json.load(jsonfile)
+        except ValueError as e:
+            logger.info(mFile + ' is not a properly formatted json file')
+            logger.info(str(e))
+            exit(1)
 
     mList = config[MANIFEST_KEY]
 
@@ -211,8 +216,8 @@ def installModule(mRequest, mVersion, envPath):
     return True
 
 def installModules(mList,envPath):
-    sList = []
-    fList = []
+    sList = [] # Success 
+    fList = [] # Fail
     for requestedVersion in mList:
         # Get the elements of the requested module - parseVersion may modify
         mName, mCompare, mVersion = parseVersion(requestedVersion)
@@ -247,7 +252,7 @@ def installModules(mList,envPath):
         elif resultCode == 2:
             sList.append('Module "' + mName + '" is a built-in.')
         elif resultCode == 3:
-            fList.append('Module "' + mRequested + '" could not be installed.')
+            fList.append('Module "' + mRequested + '"')
         elif resultCode == 4:
             sList.append('Module "' + mName + '" was not updated from version ' + installedVersion)
         else:
@@ -259,6 +264,8 @@ def installModules(mList,envPath):
 def main(progName):
     #  Set up logging so journalc can be used
     createLogger(progName)
+    logger.info('---------------------------------------------------')
+    logger.info(os.path.basename(sys.argv[0]) + ' is attempting to install python modules')
 
     #  Validate that the call was well formed and get the arguments
     manifestFile, pluginPath = validateParams()
@@ -272,7 +279,8 @@ def main(progName):
 
     # Install the modules
     successList = []
-    failList = []    
+    failList = []
+
     successList, failList = installModules(moduleList,venvPath)
 
     if len(successList) > 0:
@@ -282,12 +290,16 @@ def main(progName):
             logger.info(entry)
 
     if len(failList) > 0:
-        logger.info('---------------------------------------------')
+        logger.info('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
         logger.info('The following modules could not be installed:')
         for entry in failList:
             logger.info(entry)
-            sys.exit(1)
+        logger.info('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+        sys.exit(1)
 
+    logger.info('---------------------------------------')
+    logger.info('All modules were successfully installed')
+    logger.info('---------------------------------------')
 if __name__ == "__main__":  # Do not run anything below if the file is imported by another program
     programName = sys.argv[0]
     main(programName)
