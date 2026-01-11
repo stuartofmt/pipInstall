@@ -36,6 +36,11 @@ Note: If a module is already installed but failes reinstall / update
       The occurence is logged and the install request is considered successful.
 
 Logging is sent to journalctl with various messages indicating what was actually done.
+Logging is also sent to a logfile pipInstall2.log
+
+A special, dummy module "--verbose" can be included in
+
+as the VERY FIRST module.  This enables verbose logging (see verbose_test.json)
 
 Return Codes:
 
@@ -50,8 +55,8 @@ Usually this will be due to one of the following:
  
 #!/opt/dsf/plugins/`<plugin name>`/venv/bin/python -u  
 
-## Manually Tested in the following DSF environment
-DSF 3.5.0x (Waiting for Rel 3.6.x)
+## Tested in the following DSF environment
+DSF 3.5.0x 3.6.x
 
 Installed as:
 
