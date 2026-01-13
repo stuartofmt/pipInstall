@@ -37,10 +37,13 @@ See class ExitCodes below.
 
 Verson:
 1.0.0
-Initial Release
+Initial Release by Stuart Strolin
+
 Version 1.1.0 - Modified by Andy at Duet3d
-Version 1.1.1 - MOdified by Stuart Strolin
-Fixed issue handling modules with no version number e.e shlex
+
+Version 1.1.1 - Modified by Stuart Strolin
+Fixed issue handling modules with no version number e.g shlex
+
 Version 1.1.2 - Modified by Stuart Strolin
 Added flags so venv has upgraded pip and is cleared each time
 changed pip list to pip freeze to get version numbers
@@ -49,6 +52,12 @@ added quotes around module name in pip install to avoid redirects e.g. module>2
 added logfile
 added --verbose flag - first (dummy) entry in manifest file 'sbcPythonDependencies'
 replaced pkg_resources (deprecated) version parsing with packaging.version
+
+Version 1.1.3 - Modified by Stuart Strolin
+conditionally import version from packaging.version for python 3.13 and above
+logfile created only if --verbose flag set
+logfile location changed to /opt/dsf/sd/sys with fallback to cwd
+logfile name is pipInstall2.log
 """
 
 
@@ -72,7 +81,7 @@ from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '1.1.2'
+THIS_VERSION = '1.1.3'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 PIP = 'pip'
@@ -328,6 +337,7 @@ def getInstalledVersion(m, envPath):
 	try:
 		globals()[m] = __import__(m)  # Will likely not work if alternate python versions allowed in future
 		result = globals()[m].__version__
+		logger.debug(f'Global Module {m} found with version {result}')
 		return result
 	except (AttributeError): # No version information
 		if globals()[m].__name__ == m: # Module is installed so treat it as a builtin
