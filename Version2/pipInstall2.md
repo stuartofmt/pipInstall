@@ -36,17 +36,16 @@ Note: If a module is already installed but failes reinstall / update
       The occurence is logged and the install request is considered successful.
 
 Logging is sent to journalctl with various messages indicating what was actually done.
-Logging is also sent to a logfile pipInstall2.log
 
-A special, dummy module "--verbose" can be included in
+A special, dummy module "--verbose" can be included in plugin.json --> as the VERY FIRST module.  This enables verbose logging (see verbose_test.json)
 
-as the VERY FIRST module.  This enables verbose logging (see verbose_test.json)
+If --verbose is set logging is sent to logfile pipInstall2.log
 
 Return Codes:
 
 0 - All modules successfully installed or sensibly handled.
 
-1 = Something nasty happened or one or more modules failed to install.
+Other than 0 --> Something nasty happened or one or more modules failed to install (see code for explicit values).
 Usually this will be due to one of the following:
 - No module was found for the requested version.
 - pip could not handle the request.
