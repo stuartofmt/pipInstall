@@ -2,57 +2,74 @@
 
 A python script to install python package dependencies for DSF plugins.
 
-Creates a Virtual Python Environment
+Verson:
+1.0.0
+Initial Release by Stuart Strolin
 
-Reports success on built-in modules.
+Version 1.1.0 - Modified by Andy at Duet3d
 
-Provides logic to (hopefully) avoid version conflicts due to different plugin requirements by installing specified versions.
+Version 1.1.1 - Modified by Stuart Strolin
+Fixed issue handling modules with no version number e.g shlex
 
-Uses the default pip version for the OS.
+Version 1.1.2 - Modified by Stuart Strolin
+Added flags so venv has upgraded pip and is cleared each time
+changed pip list to pip freeze to get version numbers
+added --force-reinstall to pip install command as a safety measure
+added quotes around module name in pip install to avoid redirects e.g. module>2
+added logfile
+added --verbose flag - first (dummy) entry in manifest file 'sbcPythonDependencies'
+replaced pkg_resources (deprecated) version parsing with packaging.version
+
+Version 2.0.0 - Modified by Stuart Strolin
+Restructured for ease of maintenance
+Conditionally import version from packaging.version for python 3.13 and above
+logfile location is ./venv for the plugin with fallback to cwd (for testing)
+logfile name is pipInstall2.log
+added .pth and .py file to ensure site-packages is at front of sys.path
+externalize function to get updated module version from venv after install
+improved logging messages
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
 
+Both `<manifest name>` and `<plugin path>` are fully qualified
+
+A virtual environment will be created for python at
+`<plugin Path>`/venv
+
 If version number is supplied it must use one of the following comparisons:
-```
-==
->=
-<=
->
-<
-~=    Note ~= will be converted to >=
-```
+`==`
+`>=`
+`<=`
+`>`
+`<`
+`~=    Note ~= will be converted to >=`
 
-Version numbers specifying max / min ranges are not supported
+Rules:
+1. If module is built-in it will be ignored
+2. If module is already installed and no version is requested it will be ignored
+3. If module is not installed it will be installed
+	3a. If no version - it will be installed at the latest version
+	3b. If version is requested it will be installed at that version
 
-Rules (executed in order):
-        1. If the module is a Built-In ==> do nothing
-        2. If the module is not installed ==> try to Install
-        3. If module is installed and no version given ==> try to install latest version
-        4. If module is installed and version is given, try to honor request.
-           Note: downgrades of version are attempted if requested.
+4. Installed modules will be placed in site-packages of the virtual environment
+5. site-packages will be placed at the front of sys.path when the venv python interpreter is used
+therefore installed modules will take precedence over system modules
 
-Note: If a module is already installed but failes reinstall / update
-      The occurence is logged and the install request is considered successful.
+logging is sent to journalctl as well as a log file `<plugin Path>`/venv/pipInstall2.log
 
-Logging is sent to journalctl with various messages indicating what was actually done.
-
-A special, dummy module "--verbose" can be included in plugin.json --> as the VERY FIRST module.  This enables verbose logging (see verbose_test.json)
-
-If --verbose is set logging is sent to logfile pipInstall2.log
+A special, dummy module "--verbose" can be included in plugin.json --> as the VERY FIRST module.  This enables verbose logging (see example in file verbose_test.json)
 
 Return Codes:
 
 0 - All modules successfully installed or sensibly handled.
 
 Other than 0 --> Something nasty happened or one or more modules failed to install (see code for explicit values).
-Usually this will be due to one of the following:
-- No module was found for the requested version.
-- pip could not handle the request.
+Usually this will be because pip could not handle the install request.
 
-#  Note: python scripts in Duet3d plugins need to have a shebang
- 
-#!/opt/dsf/plugins/`<plugin name>`/venv/bin/python -u  
+#  Note: python scripts in Duet3d plugins DO NOT need to have a shebang
+Provided the calling program does so with a fully qualified path. If the plugin is itself a python script - this is done by the plugin manager. 
 
 ## Tested in the following DSF environment
 DSF 3.5.0x 3.6.x
