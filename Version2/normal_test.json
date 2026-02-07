@@ -1,4 +1,4 @@
 {
 "name": "pipInstall2Test",
-"sbcPythonDependencies": ["blabla","argparse>=1.2", "shlex", "sys","os","re","datetime==1.0.0","pyOpenSSL==20.0.1", "PyGithub>2","time","requests","json==2.0.0","signal"]
+"sbcPythonDependencies": ["requirements.txt","argparse>=1.2", "shlex", "sys","os","re","datetime==1.0.0","pyOpenSSL==20.0.1", "PyGithub>2","time","requests","json==2.0.0","signal"]
  }		

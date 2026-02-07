@@ -28,6 +28,9 @@ logfile name is pipInstall2.log
 added .pth and .py file to ensure site-packages is at front of sys.path
 externalize function to get updated module version from venv after install
 improved logging messages
+modules can be specified as one of more  txt file(s) (e.g requirements.txt) in plugin.json
+requirements files need to be \located in the dsf folder (i.e. same folder as python files)
+
 
 
 Useage:
