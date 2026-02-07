@@ -63,6 +63,8 @@ logfile name is pipInstall2.log
 added .pth and .py file to ensure site-packages is at front of sys.path
 externalize function to get updated module version from venv after install
 improved logging messages
+modules can be specified as one of more  txt file(s) (e.g requirements.txt) in plugin.json
+requirements files need to be \located in the dsf folder (i.e. same folder as python files)
 """
 
 
@@ -236,13 +238,13 @@ def createVenvFiles(pythonFile, envPath):
 			break
 
 	# Create the path change file to ensure site-packages is at the front of sys.path
-	pyfile = f'''import sys\n'''\
-			f'''print(f'NEW PATH ORDER')\n'''\
-			f'''print(f'{sitePackagesPath}')\n'''\
-			f'''print('is now at the front of sys.path')\n'''\
-			f'''sys.path.remove('{sitePackagesPath}')\n'''\
+	pyfile = (
+			f'''import sys\n'''
+			f'''print(f'{sitePackagesPath}')\n'''
+			f'''print('is now at the front of sys.path')\n'''
+			f'''sys.path.remove('{sitePackagesPath}')\n'''
 			f'''sys.path.insert(0, '{sitePackagesPath}')\n'''
-	
+			)
 
 	#.pth file just imports the above file
 	pthfile=f'''import {PATHFILENAME}\n'''
@@ -267,23 +269,24 @@ def createImportTestFile(sitePackagesPath):
 	the the install to check if the module is installed and its version
 	"""
 
-	importtestfile = \
-	f'''import sys\n'''\
-	f'''\n\n'''\
-	f'''def importTest(m):\n'''\
-	f'''\ttry:\n'''\
-	f'''\t\tglobals()[m] = __import__(m)\n'''\
-	f'''\t\tresult = globals()[m].__version__\n'''\
-	f'''\t\treturn result, 'INSTALLEDWITHVERSION'\n'''\
-	f'''\texcept (AttributeError): # No version information\n'''\
-	f'''\t\tif globals()[m].__name__ == m: # Module is installed so treat it as a builtin\n'''\
-	f'''\t\t\treturn 'None', 'INSTALLEDNOVERSION'\n'''\
-	f'''\texcept (ImportError, ModuleNotFoundError):\n'''\
-	f'''\t\treturn 'None', 'NOTINSTALLED'\n'''\
-	f'''\n\n'''\
+	importtestfile = (
+	f'''import sys\n'''
+	f'''\n\n'''
+	f'''def importTest(m):\n'''
+	f'''\ttry:\n'''
+	f'''\t\tglobals()[m] = __import__(m)\n'''
+	f'''\t\tresult = globals()[m].__version__\n'''
+	f'''\t\treturn result, 'INSTALLEDWITHVERSION'\n'''
+	f'''\texcept (AttributeError): # No version information\n'''
+	f'''\t\tif globals()[m].__name__ == m: # Module is installed so treat it as a builtin\n'''
+	f'''\t\t\treturn 'None', 'INSTALLEDNOVERSION'\n'''
+	f'''\texcept (ImportError, ModuleNotFoundError):\n'''
+	f'''\t\treturn 'None', 'NOTINSTALLED'\n'''
+	f'''\n\n'''
 	f'''m = sys.argv[1]\n'''\
-	f'''result, resultType = importTest(m)\n'''\
+	f'''result, resultType = importTest(m)\n'''
 	f'''print(f'{{result}}, {{resultType}}')\n'''
+	)
 
 	file = os.path.normpath(os.path.join(sitePackagesPath , f'{IMPORTTESTFILE}'))
 	logger.debug(f'Creating Import Test file at: {file}')
@@ -359,10 +362,11 @@ def validateParams():
 
 def parseVersion(request) -> Dependency:
 	# Get the module name and any conditional and version
+	
 	if ',' in request:
 		logger.critical(f'Unsupported Conditional in: {request}')
 		shutDown(ExitCodes.UNSUPPORTED_CONDITIONAL)
-
+	
 	dep = Dependency.parse(request)
 
 	if dep is None:
@@ -429,6 +433,24 @@ def getModuleList(mFile):
 	pluginname = config[NAME_KEY]
 
 	return mList, verbose , pluginname
+
+def checkForRequirementsFiles(moduleList, pluginPath):
+	updatedModuleList = []
+	for module in moduleList:
+		logger.debug(f'Checking module entry: {module}')
+		if module.endswith('.txt') and os.path.isfile(os.path.normpath(os.path.join(pluginPath, 'dsf',module))):
+			# It's a requirements file
+			reqfile = os.path.normpath(os.path.join(pluginPath,'dsf', module))
+			logger.debug(f'Processing requirements file: {reqfile}')
+			with open(reqfile, 'r') as f:
+				for line in f:
+					line = line.strip()
+					if line == '' or line.startswith('#'):
+						continue  # skip blank lines and comments
+					updatedModuleList.append(line)
+		else:
+			updatedModuleList.append(module)
+	return updatedModuleList	
 
 
 def getFreezeList(pythonFile) -> str:
@@ -499,7 +521,7 @@ def installModule(mod, comp, val, pythonFile):
 	else:
 		request = mod
 
-	logger.debug(f'\nAttempting install of: {request}\n')	
+	logger.info(f'\nAttempting install of: {request}\n')	
 
 	if comp == 'None':
 		cmd = f'{pythonFile} -m {PIP} install "{request}" --no-cache-dir --upgrade --force-reinstall {pipQuiet}'
@@ -692,6 +714,9 @@ def main(progName):
 	if verbose:
 		logger.setLevel(logging.DEBUG)
 		pipQuiet = ''
+
+	# Check moduleList for requirements files
+	moduleList = checkForRequirementsFiles(moduleList, pluginPath)
 
 	# Ensure site-packages are at the front of sys.path in venv
 	sitePath = createVenvFiles(pythonFile, venvPath)
