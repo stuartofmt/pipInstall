@@ -71,7 +71,7 @@ Return Codes:
 Other than 0 --> Something nasty happened or one or more modules failed to install (see code for explicit values).
 Usually this will be because pip could not handle the install request.
 
-#  Note: python scripts in Duet3d plugins DO NOT need to have a shebang
+##  Note: python scripts in Duet3d plugins DO NOT need to have a shebang
 Provided the calling program does so with a fully qualified path. If the plugin is itself a python script - this is done by the plugin manager. 
 
 ## Tested in the following DSF environment
