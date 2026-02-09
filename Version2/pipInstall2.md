@@ -21,17 +21,16 @@ Version 1.1.2 - Modified by Stuart Strolin
 - replaced pkg_resources (deprecated) version parsing with packaging.version
 
 Version 2.0.0 - Modified by Stuart Strolin
-Restructured for ease of maintenance
-Conditionally import version from packaging.version for python 3.13 and above
-logfile location is ./venv for the plugin with fallback to cwd (for testing)
-logfile name is pipInstall2.log
-added .pth and .py file to ensure site-packages is at front of sys.path
-externalize function to get updated module version from venv after install
-improved logging messages
-modules can be specified as one of more  txt file(s) (e.g requirements.txt) in plugin.json
-requirements files need to be \located in the dsf folder (i.e. same folder as python files)
-supports modules from git e.e. git+https://github.com/pallets/flask.git
-
+- Restructured for ease of maintenance
+- Conditionally import version from packaging.version for python 3.13 and above
+- logfile location is ./venv for the plugin with fallback to cwd (for testing)
+- logfile name is pipInstall2.log
+- added .pth and .py file to ensure site-packages is at front of sys.path
+- externalize function to get updated module version from venv after install
+- improved logging messages
+- modules can be specified as one of more txt file(s) (e.g requirements.txt) in plugin.json
+- requirements files need to be \located in the dsf folder (i.e. same folder as python files)
+- supports modules from git e.g. git+https://github.com/pallets/flask.git
 
 
 Useage:
