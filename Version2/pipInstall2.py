@@ -64,7 +64,8 @@ added .pth and .py file to ensure site-packages is at front of sys.path
 externalize function to get updated module version from venv after install
 improved logging messages
 modules can be specified as one of more  txt file(s) (e.g requirements.txt) in plugin.json
-requirements files need to be \located in the dsf folder (i.e. same folder as python files)
+requirements files need to be located in the dsf folder (i.e. same folder as python files)
+supports modules from git e.e. git+https://github.com/pallets/flask.git
 """
 
 
@@ -131,7 +132,8 @@ class modType(Enum):
 	NOTINSTALLED = 'Not Installed'
 
 class Dependency:
-	regex = r'(^([\w\-_]+)((==|~=|>=|<=|>|<)((\d+!)?(\d)+(\.\d+)*(-?(a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?))?$)|(^git\+.*$)'
+	regex = r'(^([\w\-_]+)((==|~=|>=|<=|>|<)((\d+!)?(\d)+(\.\d+)*(-?(a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?))?$)|(^git\+.*$)'	
+	# NOTE THAT THIS DOES NOT WORK WITH PACKAGE NAMES THAT CONTAIN [] (which are illegal)
 
 	class RegexGroups(Enum):
 		PYPI = 0
@@ -192,9 +194,9 @@ class Dependency:
 
 			# Convert to canonical name format
 			name = str(result[cls.RegexGroups.PACKAGE_NAME.value])
-			name = name.lower()
-			name = name.replace('-', '_')
-			name = name.replace('.', '_') # this is just the name
+			# use official pipi convention		
+			name = re.sub(r"[-_.]+", "-", name).lower()
+
 			dep.package = name
 
 			dep.comparator = str(result[cls.RegexGroups.COMPARATOR.value])
@@ -367,6 +369,7 @@ def parseVersion(request) -> Dependency:
 		logger.critical(f'Unsupported Conditional in: {request}')
 		shutDown(ExitCodes.UNSUPPORTED_CONDITIONAL)
 	
+	
 	dep = Dependency.parse(request)
 
 	if dep is None:
@@ -495,10 +498,9 @@ def getModuleVersion(m, pythonFile, sitePath, freezeList):
 	#Also check if module is installed in pip
 	#Sometimes module cannot be imported with same name as pip package
 
-	# use canonical form of module name 
-	cm = m.lower()
-	cm = cm.replace('-', '_')
-	cm = cm.replace('.', '_')
+	# use canonical form of module name
+	cm = re.sub(r"[-_.]+", "-", m).lower()
+
 	if cm in freezeList:  # The module exists
 		# Try to get version number
 		regex = f'^{cm}==(.+)$' #used for freeze
