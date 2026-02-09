@@ -9,16 +9,16 @@ Initial Release by Stuart Strolin
 Version 1.1.0 - Modified by Andy at Duet3d
 
 Version 1.1.1 - Modified by Stuart Strolin
-Fixed issue handling modules with no version number e.g shlex
+- Fixed issue handling modules with no version number e.g shlex
 
 Version 1.1.2 - Modified by Stuart Strolin
-Added flags so venv has upgraded pip and is cleared each time
-changed pip list to pip freeze to get version numbers
-added --force-reinstall to pip install command as a safety measure
-added quotes around module name in pip install to avoid redirects e.g. module>2
-added logfile
-added --verbose flag - first (dummy) entry in manifest file 'sbcPythonDependencies'
-replaced pkg_resources (deprecated) version parsing with packaging.version
+- Added flags so venv has upgraded pip and is cleared each time
+- changed pip list to pip freeze to get version numbers
+- added --force-reinstall to pip install command as a safety measure
+- added quotes around module name in pip install to avoid redirects e.g. module>2
+- added logfile
+- added --verbose flag - first (dummy) entry in manifest file 'sbcPythonDependencies'
+- replaced pkg_resources (deprecated) version parsing with packaging.version
 
 Version 2.0.0 - Modified by Stuart Strolin
 Restructured for ease of maintenance
