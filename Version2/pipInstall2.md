@@ -32,6 +32,12 @@ Version 2.0.0 - Modified by Stuart Strolin
 - requirements files need to be \located in the dsf folder (i.e. same folder as python files)
 - supports modules from git e.g. git+https://github.com/pallets/flask.git
 
+Version 2.0.1 - Modified by Stuart Strolin
+- Added defensive code for unexpected error in output from import test script
+
+Version 2.0.2 - Modified by Stuart Strolin
+- Added support for extras in module names (use of square brackets) e.g. package[standard]
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
@@ -75,7 +81,7 @@ Usually this will be because pip could not handle the install request.
 Provided the calling program does so with a fully qualified path. If the plugin is itself a python script - this is done by the plugin manager. 
 
 ## Tested in the following DSF environment
-DSF 3.5.0x 3.6.x
+DSF 3.6.x
 
 Installed as:
 
