@@ -1,4 +1,4 @@
-ultralytics
-ncnn
-opencv-python
-picamera2
+uvicorn[standard]>=0.35.0
+datetime==1.0.0
+pyOpenSSL==20.0.1
+PyGithub>2
