@@ -73,6 +73,10 @@ Added defensive code for unexpected error in output from import test script
 Version 2.0.2 - Modified by Stuart Strolin
 Added support for extras in module names (use of square brackets) e.g. package[standard]
 
+Version 2.0.3 - Modified by Stuart Strolin
+Added support for period in name e.g. keyrings.alt
+Added support for space in name e.g. --user dsf-python
+
 """
 
 
@@ -97,7 +101,7 @@ from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.0.2'
+THIS_VERSION = '2.0.3'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
@@ -139,9 +143,10 @@ class modType(Enum):
 	NOTINSTALLED = 'Not Installed'
 
 class Dependency:
-	regex = r'(^([\w\-_\[\]]+)((==|~=|>=|<=|>|<)((\d+!)?(\d)+(\.\d+)*(-?(a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?))?$)|(^git\+.*$)'	
-	# Supports package[extra] and git dependencies but does not support environment markers or multiple conditions
-	# (e.g. package1; python_version < "3.8", package2; python_version >= "3.8")
+	# Added supports for square brackets in the form of package[extra] and git dependencies
+	# Added support for period in name
+	# Note space in first character set to get things like --user dsf-python
+	regex = r'(^([\w\-_\[\]\. ]+)((==|~=|>=|<=|>|<)((\d+!)?(\d)+(\.\d+)*(-?(a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?))?$)|(^git\+.*$)'
 
 	#fOLLOWING ARE THE GROUP INDICES FOR THE REGEX
 	class RegexGroups(Enum):
@@ -252,7 +257,7 @@ def createVenvFiles(pythonFile, envPath):
 	pyfile = (
 			f'''import sys\n'''
 			f'''print(f'{sitePackagesPath}')\n'''
-			f'''print('is now at the front of sys.path')\n'''
+			f'''print('is now at the front of sys.path in venv')\n'''
 			f'''sys.path.remove('{sitePackagesPath}')\n'''
 			f'''sys.path.insert(0, '{sitePackagesPath}')\n'''
 			)
@@ -382,7 +387,6 @@ def parseVersion(request) -> Dependency:
 		logger.critical(f'Unsupported Conditional in: {request}')
 		shutDown(ExitCodes.UNSUPPORTED_CONDITIONAL)
 	
-	
 	dep = Dependency.parse(request)
 
 	if dep is None:
@@ -479,7 +483,6 @@ def getFreezeList(pythonFile) -> str:
 	# e.g. pyOpenSSL vs py_openssl could be installed by pyopenssl
 	request = request.lower()
 	request = request.replace('-', '_')
-	#request = request.replace('.', '_') # leave version numbers alone
 
 	return request
 
@@ -516,6 +519,7 @@ def getModuleVersion(m, pythonFile, sitePath, freezeList):
 	#Sometimes module cannot be imported with same name as pip package
 
 	# use canonical form of module name
+	# described here: https://packaging.python.org/en/latest/specifications/name-normalization/
 	cm = re.sub(r"[-_.]+", "-", m).lower()
 
 	if cm in freezeList:  # The module exists
