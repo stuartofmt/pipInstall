@@ -73,10 +73,11 @@ Added defensive code for unexpected error in output from import test script
 Version 2.0.2 - Modified by Stuart Strolin
 Added support for extras in module names (use of square brackets) e.g. package[standard]
 
-Version 2.0.3 - Modified by Stuart Strolin
+Version 2.1.0 - Modified by Stuart Strolin
 Added support for period in name e.g. keyrings.alt
-Added support for space in name e.g. --user dsf-python
-
+Added support for space in name
+Added support for control arguments e.g. --user in e.g. --user dsf-python
+Changed version determination to give better insight
 """
 
 
@@ -101,7 +102,7 @@ from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.0.3'
+THIS_VERSION = '2.1.0'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
@@ -145,7 +146,7 @@ class modType(Enum):
 class Dependency:
 	# Added supports for square brackets in the form of package[extra] and git dependencies
 	# Added support for period in name
-	# Note space in first character set to get things like --user dsf-python
+	# Note: space at end of first character set to get things like --user dsf-python
 	regex = r'(^([\w\-_\[\]\. ]+)((==|~=|>=|<=|>|<)((\d+!)?(\d)+(\.\d+)*(-?(a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?))?$)|(^git\+.*$)'
 
 	#fOLLOWING ARE THE GROUP INDICES FOR THE REGEX
@@ -208,9 +209,14 @@ class Dependency:
 
 			# Convert to canonical name format
 			name = str(result[cls.RegexGroups.PACKAGE_NAME.value])
-			# use official pipi convention		
-			name = re.sub(r"[-_.]+", "-", name).lower()
-
+			
+			# use official pipi convention
+			"""
+			if name.lower().startswith('--user'):  # take care of packages that are installed --user
+				name = name.replace('--user', '')
+				name = name.strip()
+				name = '--user ' + name
+			"""
 			dep.package = name
 
 			dep.comparator = str(result[cls.RegexGroups.COMPARATOR.value])
@@ -405,8 +411,8 @@ def runsubprocess(cmd):
 	try:
 		result = subprocess.run(cmd, capture_output=True, text=True, check=True, shell=True)
 		if result.returncode != 0:
-			if str(result.stderr) != '' and '[Error]' in str(result.stderr):
-				logger.info(f'Command Failure: {cmd}')
+			if str(result.stderr) != '' and 'Error' in str(result.stderr):
+				logger.info(f'Possible install failure: {cmd}')
 				logger.info(f'Error = {result.stderr}')
 				logger.info(f'Output = {result.stdout}')
 				return False
@@ -481,18 +487,47 @@ def getFreezeList(pythonFile) -> str:
 		shutDown(ExitCodes.PIP_LIST_ERROR)
 	# Normalise to lower case and underscore because installation names can vary
 	# e.g. pyOpenSSL vs py_openssl could be installed by pyopenssl
+	
 	request = request.lower()
 	request = request.replace('-', '_')
 
 	return request
 
 def getModuleVersion(m, pythonFile, sitePath, freezeList):
+	m = m.replace('--user','').strip() # just the module name
+	# Remove any extras (stuff in square brackets)
+	regex = r'(\[(.*?)\])'
+	result = re.findall(regex, m, flags=re.IGNORECASE)
+	if result:
+		result = list(result[0])  # Convert tuple to list
+		m = m.replace(str(result[0]),'')
+	# SRS Swap import test with pip freeze test - makes more sense
+
+	#Also check if module is installed in pip
+	#Sometimes module cannot be imported with same name as pip package
+	underscore_m = m.replace('-','_')
+	freeze_m = underscore_m.lower() #  freezeList was normalized this way
+
+	# Is the module already installed by PIP
+	regex = f'^{freeze_m}==(.+)$' # format used for freeze
+	result = re.findall(regex, freezeList, flags=re.MULTILINE)
+
+	if result:  # The module exists
+		if result[0] != '':  # version number found
+			logger.debug(f'Pip: Version number "{result[0]}" was found for module "{m}"')
+			return result[0], modType.PIPWITHVERSION.value
+		else:
+			logger.debug(f'Pip: Module "{m}" exists but does not have a version number.')
+			return 'None', modType.PIPNOVERSION.value
+	else:
+		logger.debug(f'Pip: Module "{m}" was not found')
+
 	# Check if module is a built-in
-	if (m in sys.builtin_module_names): # Returns compiled modules. Will miss some std modules
+	if (underscore_m in sys.builtin_module_names): # Returns compiled modules. Will miss some std modules
 		logger.debug(f'Module {m} is built-in')
 		return 'None', modType.BUILTIN.value
 			
-	cmd = f'{pythonFile} {sitePath}/{IMPORTTESTFILE} {m}'
+	cmd = f'{pythonFile} {sitePath}/{IMPORTTESTFILE} {underscore_m}'
 	request = runsubprocess(cmd)
 
 	if not isinstance(request, str):
@@ -507,35 +542,15 @@ def getModuleVersion(m, pythonFile, sitePath, freezeList):
 		
 		#Check if module can be imported (i.e. is installed)
 		if  resultType == 'INSTALLEDWITHVERSION':
-			logger.debug(f'Module {m} is installed with version {result}')
+			logger.debug(f'Import: {m} imported with version {result}')
 			return result, modType.INSTALLEDWITHVERSION.value
 		elif resultType == 'INSTALLEDNOVERSION':
-			logger.debug(f'Module {m} is installed (no version info)')
-			return 'None', modType.INSTALLEDNOVERSION.value
+			logger.debug(f'Import: {m} imported (no version info)')
+			return 'Installed', modType.INSTALLEDNOVERSION.value
 		elif resultType == 'NOTINSTALLED':
-			logger.debug(f'Module {m} is not installed because {result}')
-
-	#Also check if module is installed in pip
-	#Sometimes module cannot be imported with same name as pip package
-
-	# use canonical form of module name
-	# described here: https://packaging.python.org/en/latest/specifications/name-normalization/
-	cm = re.sub(r"[-_.]+", "-", m).lower()
-
-	if cm in freezeList:  # The module exists
-		# Try to get version number
-		regex = f'^{cm}==(.+)$' #used for freeze
-		result = re.findall(regex, freezeList, flags=re.MULTILINE)
-
-		if result and result[0] != '':  # version number found
-			logger.debug(f'Pip: Version number "{result[0]}" was found for module "{m}"')
-			return result[0], modType.PIPWITHVERSION.value
-		else:
-			logger.debug(f'Pip: Module "{m}" exists but does not have a version number.')
-			return 'None', modType.PIPNOVERSION.value
-	else:
-		logger.debug(f'Pip: Module "{m}" is not available')
-		return 'None', modType.NOTINSTALLED.value
+			logger.debug(f'Import: {m} could not be imported because {result}')
+	
+	return 'None', modType.NOTINSTALLED.value
 
 
 def installModule(mod, comp, val, pythonFile):
@@ -544,16 +559,22 @@ def installModule(mod, comp, val, pythonFile):
 	else:
 		request = mod
 
-	logger.info(f'\nAttempting install of: {request}\n')	
+	logger.info(f'\nAttempting install of: {request}\n')
+	# adjust for user install
+	user = ''
+	if request.startswith('--user'):
+		request = request.replace('--user','').strip()
+		user = '--user'
 
 	if comp == 'None':
-		cmd = f'{pythonFile} -m {PIP} install "{request}" --no-cache-dir --upgrade --force-reinstall {pipQuiet}'
+		cmd = f'{pythonFile} -m {PIP} install {user} "{request}" --no-cache-dir --upgrade --force-reinstall {pipQuiet}'
 	else:
-		cmd = f'{pythonFile} -m {PIP} install "{request}" --no-cache-dir --force-reinstall {pipQuiet}'
+		cmd = f'{pythonFile} -m {PIP} install {user} "{request}" --no-cache-dir --force-reinstall {pipQuiet}'
+
 	result = runsubprocess(cmd)
 	
 	if result == False:  # module could not be installed
-		logger.debug(f'Module: {request} could not be installed')
+		logger.debug(f'Module: {user} {request} could not be installed')
 		return False
 	else:
 		logger.debug(f'Command was ==> \n{cmd}')
@@ -588,7 +609,7 @@ def processRequests(modulerequests, pythonFile, sitePath):
 
 		if need_install:
 			install_ok = installModule(mod_name, requested_version_comp, requested_version_val, pythonFile)
-			if install_ok:
+			if install_ok or current_version == 'Installed':
 				install_result = 'Succeeded'
 				#install_version, _ = getModuleVersion(mod_name, pythonFile, sitePath,freezeList)
 			else:
@@ -680,8 +701,8 @@ def reportResults(builtinList, skippedList, installedList, failedList):
 			if requested_version_comp == 'None':
 				requested_version_comp = ''
 			if current_version == install_version:
-				install_version = f'Reinstalled with current version'
-			if current_version == 'None':
+				install_version = f'Reinstalled with same version'
+			if current_version == 'None' or current_version == 'Installed':
 				current_version = ''
 			if install_version == 'None':	
 				install_version = 'no Version'
@@ -697,7 +718,7 @@ def reportResults(builtinList, skippedList, installedList, failedList):
 				requested_version_comp = ''
 			if current_version == 'None':
 				current_version = ''
-			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> {current_type} {current_version}')
+			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}')
 
 def shutDown(code):
 	logger.info('---------------------------------------')

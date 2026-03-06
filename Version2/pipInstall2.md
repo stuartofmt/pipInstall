@@ -38,6 +38,10 @@ Version 2.0.1 - Modified by Stuart Strolin
 Version 2.0.2 - Modified by Stuart Strolin
 - Added support for extras in module names (use of square brackets) e.g. package[standard]
 
+Version 2.0.3 - Modified by Stuart Strolin
+Added support for period in name e.g. keyrings.alt
+Added support for space in name and --user argument  e.g. --user dsf-python
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`

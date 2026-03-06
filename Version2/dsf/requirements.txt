@@ -3,4 +3,4 @@ datetime==1.0.0
 pyOpenSSL==20.0.1
 PyGithub>2
 keyrings.alt
-"--user dsf-python"
+dsf-python
