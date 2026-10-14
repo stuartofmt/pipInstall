@@ -42,6 +42,19 @@ Version 2.0.3 - Modified by Stuart Strolin
 Added support for period in name e.g. keyrings.alt
 Added support for space in name and --user argument  e.g. --user dsf-python
 
+Version 2.1.0 - Modified by Stuart Strolin
+- Added support for control arguments e.g. --user in e.g. --user dsf-python
+- Changed version determination to give better insight
+
+Version 2.1.1 - Modified by Stuart Strolin
+- changed logger to initially output to console
+- then after arguments passed add logfile
+
+Version 2.1.2 - Modified by Stuart Strolin
+- Added support for PEP 508 environment markers e.g. `picamera2; sys_platform == "linux"`
+- modules whose marker does not apply to the current platform are skipped
+- applies to entries in plugin.json and in requirements files
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
@@ -69,6 +82,22 @@ Rules:
 4. Installed modules will be placed in site-packages of the virtual environment
 5. site-packages will be placed at the front of sys.path when the venv python interpreter is used
 therefore installed modules will take precedence over system modules
+
+Environment markers:
+
+A module can be made platform dependent by adding a standard (PEP 508) environment marker after a `;`
+This works for modules listed directly in plugin.json and for lines in requirements files e.g.
+
+```
+picamera2; sys_platform == "linux"
+pygrabber==0.2; sys_platform == "win32"
+```
+
+The marker is evaluated on the machine pipInstall is running on.
+If it matches, the module is processed as normal (using the part before the `;`).
+If it does not match, the module is skipped.
+If the marker cannot be evaluated a warning is logged and the module is installed anyway.
+Any standard marker can be used e.g. `platform_machine == "aarch64"` or `python_version >= "3.11"`
 
 logging is sent to journalctl as well as a log file `<plugin Path>`/venv/pipInstall2.log
 

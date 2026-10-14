@@ -78,6 +78,15 @@ Added support for period in name e.g. keyrings.alt
 Added support for space in name
 Added support for control arguments e.g. --user in e.g. --user dsf-python
 Changed version determination to give better insight
+
+Version 2.1.1 - Modified by Stuart Strolin
+changed logger to initially output to console
+then after arguments passed add logfile
+
+Version 2.1.2 - Modified by Stuart Strolin
+Added support for PEP 508 environment markers e.g. picamera2; sys_platform == "linux"
+modules whose marker does not apply to the current platform are skipped
+applies to entries in plugin.json and in requirements files
 """
 
 
@@ -97,12 +106,13 @@ import sysconfig
 import argparse
 import json
 
+
 from enum import Enum, auto
 from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.1.0'
+THIS_VERSION = '2.1.2'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
@@ -370,17 +380,21 @@ def validateParams():
 	pPath = args['p'][0]
 
 	if mFile is None:
-		logger.critical('Exiting: No manifest file (-m) was provided')
+		print('Exiting: No manifest file (-m) was provided')
+		#logger.critical('Exiting: No manifest file (-m) was provided')
 		shutDown(ExitCodes.NO_MANIFEST_PROVIDED)
 	elif not os.path.isfile(mFile):
-		logger.critical(f'Exiting: Manifest file "{mFile}" does not exist')
+		print(f'Exiting: Manifest file "{mFile}" does not exist')
+		#logger.critical(f'Exiting: Manifest file "{mFile}" does not exist')
 		shutDown(ExitCodes.MANIFEST_DOES_NOT_EXIST)
 
 	if pPath is None:
-		logger.critical('Exiting: No plugin path (-p) was provided')
+		print('Exiting: No plugin path (-p) was provided')
+		#logger.critical('Exiting: No plugin path (-p) was provided')
 		shutDown(ExitCodes.NO_PLUGIN_PROVIDED)
 	elif not os.path.isdir(pPath):
-		logger.critical(f'Exiting: Plugin file "{mFile}" does not exist')
+		print(f'Exiting: Plugin path "{pPath}" does not exist')
+		#logger.critical(f'Exiting: Plugin file "{mFile}" does not exist')
 		shutDown(ExitCodes.PLUGIN_DOES_NOT_EXIST)
 
 	return mFile, pPath
@@ -476,6 +490,28 @@ def checkForRequirementsFiles(moduleList, pluginPath):
 					updatedModuleList.append(line)
 		else:
 			updatedModuleList.append(module)
+	return updatedModuleList
+
+def applyEnvironmentMarkers(moduleList):
+	# Handle PEP 508 environment markers e.g. picamera2; sys_platform == "linux"
+	# Entries whose marker does not apply to this platform are dropped
+	updatedModuleList = []
+	for module in moduleList:
+		if ';' not in module:
+			updatedModuleList.append(module)
+			continue
+		req, marker = module.split(';', 1)
+		req = req.strip()
+		marker = marker.strip()
+		try:
+			from packaging.markers import Marker
+			if not Marker(marker).evaluate():
+				logger.info(f'Skipping "{module}" - marker does not apply to this platform')
+				continue
+			logger.debug(f'Marker "{marker}" applies - using "{req}"')
+		except Exception as e:
+			logger.warning(f'Could not evaluate marker in "{module}": {e} - installing "{req}" anyway')
+		updatedModuleList.append(req)
 	return updatedModuleList	
 
 
@@ -761,6 +797,9 @@ def main(progName):
 
 	# Check moduleList for requirements files
 	moduleList = checkForRequirementsFiles(moduleList, pluginPath)
+
+	# Drop modules whose environment marker does not match this platform
+	moduleList = applyEnvironmentMarkers(moduleList)
 
 	# Ensure site-packages are at the front of sys.path in venv
 	sitePath = createVenvFiles(pythonFile, venvPath)
