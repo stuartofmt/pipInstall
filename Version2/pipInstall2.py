@@ -187,10 +187,10 @@ class ExitCodes(Enum):
 class modType(Enum):
 	BUILTIN = 'Builtin'
 	INSTALLEDWITHVERSION = 'already Installed with version'
-	INSTALLEDNOVERSION = 'already Installed no Version'
-	PIPWITHVERSION = 'Pip with Version'
-	PIPNOVERSION = 'Pip no Version'
-	NOTINSTALLED = 'Not Installed'
+	INSTALLEDNOVERSION = 'already installed with no version number'
+	PIPWITHVERSION = 'installed by Pip with version'
+	PIPNOVERSION = 'installed by Pip with no Version number'
+	NOTINSTALLED = 'was not previously installed'
 
 class Dependency:
 	# Parsing uses packaging.requirements (PEP 508) so names, extras and version
