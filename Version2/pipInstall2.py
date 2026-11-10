@@ -95,6 +95,11 @@ spaces are allowed around comparisons e.g. numpy >= 1.2
 ~= is no longer converted to >= (pip handles it correctly)
 module parsing now uses packaging.requirements instead of a custom regex
 modules already installed at a version that meets the condition are skipped instead of reinstalled
+
+Version 2.3.1 - Modified by Stuart Strolin
+Trailing comments are ignored e.g. numpy==1.26  # needed for X
+a '#' is treated as a comment when at the start or preceded by whitespace (pip rule)
+applies to entries in plugin.json (including --verbose) and in requirements files
 """
 
 
@@ -120,7 +125,7 @@ from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.3.0'
+THIS_VERSION = '2.3.1'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
@@ -130,6 +135,7 @@ FALLBACK_LOGFILENAME = os.path.normpath(os.path.join(os.getcwd(), LOGNAME))
 PATHFILENAME = 'plugin_path_change'
 IMPORTTESTFILE = 'import_test.py'
 pipQuiet = '-qq' #Reduce pip output
+COMMENT_RE = re.compile(r'(^|\s)#.*$') # '#' at start or preceded by whitespace (pip rule)
 
 if os.name == 'nt':  # Windows
 	BIN_DIR = 'Scripts'
@@ -441,8 +447,9 @@ def getModuleList(mFile):
 			logger.critical(f'"{mFile}" is not a properly formatted json file\n{e}')
 			shutDown(ExitCodes.MANIFEST_ERROR)
 
-	mList = config[MANIFEST_KEY]
-	if mList[0] == '--verbose':
+	mList = [stripComment(m) for m in config[MANIFEST_KEY]]
+	mList = [m for m in mList if m != '']  # drop blank and comment-only entries
+	if mList and mList[0] == '--verbose':
 		verbose = True
 		mList = mList[1:]  # Remove the verbose flag
 	else:
@@ -451,6 +458,10 @@ def getModuleList(mFile):
 	pluginname = config[NAME_KEY]
 
 	return mList, verbose , pluginname
+
+def stripComment(entry):
+	# Remove trailing comment (pip rule: '#' at start or preceded by whitespace)
+	return COMMENT_RE.sub('', entry).strip()
 
 def checkForRequirementsFiles(moduleList, pluginPath):
 	updatedModuleList = []
@@ -462,9 +473,9 @@ def checkForRequirementsFiles(moduleList, pluginPath):
 			logger.debug(f'Processing requirements file: {reqfile}')
 			with open(reqfile, 'r') as f:
 				for line in f:
-					line = line.strip()
-					if line == '' or line.startswith('#'):
-						continue  # skip blank lines and comments
+					line = stripComment(line)
+					if line == '':
+						continue  # skip blank lines and comment-only lines
 					updatedModuleList.append(line)
 		else:
 			updatedModuleList.append(module)

@@ -62,6 +62,11 @@ Version 2.3.0 - Modified by Stuart Strolin
 - module parsing now uses packaging.requirements instead of a custom regex
 - modules already installed at a version that meets the condition are skipped instead of reinstalled
 
+Version 2.3.1 - Modified by Stuart Strolin
+- Trailing comments are ignored e.g. `numpy==1.26  # needed for X`
+- a `#` is treated as a comment when at the start or preceded by whitespace (same rule as pip)
+- applies to entries in plugin.json (including --verbose) and in requirements files
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
@@ -111,6 +116,19 @@ If it matches, the module is processed as normal (using the part before the `;`)
 If it does not match, the module is skipped.
 If the marker cannot be evaluated a warning is logged and the module is installed anyway.
 Any standard marker can be used e.g. `platform_machine == "aarch64"` or `python_version >= "3.11"`
+
+Comments:
+
+Anything from a `#` that is at the start of an entry, or preceded by whitespace, to the end of the entry is ignored.
+This works for modules listed directly in plugin.json and for lines in requirements files e.g.
+
+```
+numpy==1.26  # needed for X
+picamera2; sys_platform == "linux"  # camera support
+# this whole entry is ignored
+```
+
+A `#` with no whitespace before it is kept e.g. `git+https://github.com/x/y.git#egg=y`
 
 logging is sent to journalctl as well as a log file `<plugin Path>`/venv/pipInstall2.log
 
