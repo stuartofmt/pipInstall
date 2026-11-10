@@ -74,6 +74,17 @@ Version 2.3.2 - Modified by Stuart Strolin
 - removed `--force-reinstall` and `--no-cache-dir` (dependencies were reinstalled and re-downloaded every time)
 - already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
 
+Version 2.3.3 - Modified by Stuart Strolin
+- argument errors now exit with their exit codes (previously crashed with IndexError / NameError)
+- the venv python no longer prints the site-packages path every time it starts
+- a requirements file (.txt) that is not found in `<plugin Path>/dsf` now exits with code 13 (previously it was treated as a module name and looked up on PyPI)
+- if the `packaging` module is not available in the system python it is installed into the venv and used from there - exits with code 14 if that fails
+- `--user` is now ignored (with a warning) - all modules are installed in the plugin venv (previously they were installed in the user site-packages, outside the venv)
+- removed pkg_resources import (deprecated and unused)
+- a failed install is no longer reported as succeeded for modules that import without version information
+- removed unused code
+- log file lines are no longer wrapped in quotes
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
@@ -92,7 +103,6 @@ Several conditions can be combined with commas, and spaces are allowed e.g.
 numpy>=1.2,<2.0
 pkg[extra] >= 1, != 1.3
 numpy==1.*
---user dsf-python>=3.6
 ```
 
 Rules:
@@ -114,7 +124,7 @@ Install steps:
 2. a single `pip install -r` of all of them, so pip resolves them together (consistent versions)
 3. if 1 or 2 fails, the modules are installed one at a time so the others still install, and each failure is reported with pip's error message
 
-`--user` entries cannot go in a requirements file so are always installed one at a time
+`--user` is ignored (with a warning) - all modules are installed in the plugin venv
 
 Environment markers:
 
@@ -153,8 +163,25 @@ Return Codes:
 
 0 - All modules successfully installed or sensibly handled.
 
-Other than 0 --> Something nasty happened or one or more modules failed to install (see code for explicit values).
+Other than 0 --> Something nasty happened or one or more modules failed to install.
 Usually this will be because pip could not handle the install request.
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | No manifest file (-m) was provided |
+| 2 | Manifest file does not exist |
+| 3 | No plugin path (-p) was provided |
+| 4 | Plugin path does not exist |
+| 6 | Problem creating the virtual environment |
+| 7 | Manifest is not a properly formatted json file |
+| 8 | pip freeze failed |
+| 9 | Unexpected error |
+| 10 | One or more modules failed to install |
+| 11 | Invalid module entry (could not be parsed) |
+| 12 | Could not get site-packages information from the venv |
+| 13 | Requirements file not found in `<plugin Path>/dsf` |
+| 14 | The python `packaging` module is not available and could not be installed into the venv |
 
 ##  Note: python scripts in Duet3d plugins DO NOT need to have a shebang
 Provided the calling program does so with a fully qualified path. If the plugin is itself a python script - this is done by the plugin manager. 

@@ -40,7 +40,7 @@ a) pip install --dry-run (with --report) of all modules that need installing - l
 b) a single pip install -r of all of them, so pip resolves them together (consistent versions)
 c) if a) or b) fails, the modules are installed one at a time so the others still install,
 	and each failure is reported with pip's error message
---user entries cannot go in a requirements file so are always installed one at a time
+"--user" is ignored (with a warning) - all modules are installed in the plugin venv
 
 Exit Codes:
 
@@ -115,6 +115,20 @@ modules are installed together with a single pip install -r so pip resolves them
 if that fails, falls back to installing one module at a time and reports each failure with pip's error
 removed --force-reinstall and --no-cache-dir (dependencies were reinstalled and re-downloaded every time)
 already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
+
+Version 2.3.3 - Modified by Stuart Strolin
+argument errors now exit with their exit codes (previously crashed with IndexError / NameError)
+the venv python no longer prints the site-packages path every time it starts
+a requirements file (.txt) that is not found in <plugin Path>/dsf now exits with code 13
+(previously it was treated as a module name and looked up on PyPI)
+if the packaging module is not available in the system python it is installed into the venv
+and used from there - exits with code 14 if that fails
+"--user" is now ignored (with a warning) - all modules are installed in the plugin venv
+(previously they were installed in the user site-packages, outside the venv)
+removed pkg_resources import (deprecated and unused)
+a failed install is no longer reported as succeeded for modules that import without version information
+removed unused code (sysconfig import, UNSUPPORTED_CONDITIONAL exit code, Dependency types and uri)
+log file lines are no longer wrapped in quotes
 """
 
 
@@ -122,25 +136,18 @@ import subprocess
 import sys
 import logging
 
-#from pkg_resources import parse_version as version
-if sys.version_info >= (3, 13):
-	from packaging.version import Version as version
-else:
-	from pkg_resources import parse_version as version
-  
 import re
 import os
-import sysconfig
 import argparse
+import importlib
 import json
 
-
-from enum import Enum, auto
+from enum import Enum
 from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.3.2'
+THIS_VERSION = '2.3.3'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
@@ -167,7 +174,6 @@ class ExitCodes(Enum):
 	MANIFEST_DOES_NOT_EXIST = 2
 	NO_PLUGIN_PROVIDED = 3
 	PLUGIN_DOES_NOT_EXIST = 4
-	UNSUPPORTED_CONDITIONAL = 5
 	PROBLEM_CREATING_VENV = 6
 	MANIFEST_ERROR = 7
 	PIP_LIST_ERROR = 8
@@ -175,6 +181,8 @@ class ExitCodes(Enum):
 	FAILED_TO_INSTALL_MODULE = 10
 	INVALID_DEPENDENCY = 11
 	PYTHON_SITE_ERROR = 12
+	REQUIREMENTS_FILE_NOT_FOUND = 13
+	PACKAGING_NOT_AVAILABLE = 14
 
 class modType(Enum):
 	BUILTIN = 'Builtin'
@@ -187,25 +195,13 @@ class modType(Enum):
 class Dependency:
 	# Parsing uses packaging.requirements (PEP 508) so names, extras and version
 	# conditions (including ranges e.g. >=1.2,<2.0) follow the same rules as pip
-	# A leading --user (e.g. --user dsf-python) and git+ urls are handled separately
-
-	class DepTypes(Enum):
-		PYPI = auto()
-		GIT = auto()
-		NONE = auto()
+	# git+ urls are handled separately
+	# A leading --user (e.g. --user dsf-python) is ignored - modules are always installed in the venv
 
 	def __init__(self) -> None:
 		self.package: str = None
 		self.version: str = None
 		self.comparator: str = None
-		self.type = self.DepTypes.NONE
-
-	@property
-	def uri(self):
-		package = "" if self.package is None else self.package
-		comparator = "" if self.comparator is None else self.comparator
-		version = "" if self.version is None else self.version
-		return package + comparator + version
 
 	@classmethod
 	def parse(cls, text: str) -> Optional['Dependency']:
@@ -220,16 +216,14 @@ class Dependency:
 
 		if text.startswith('git+'):
 			# Git dependency
-			dep.type = cls.DepTypes.GIT
 			dep.package = text
 			dep.comparator = None
 			dep.version = None
 			return dep
 
-		user = ''
-		if text.startswith('--user'):  # take care of packages that are installed --user
-			user = '--user '
+		if text.startswith('--user'):  # modules are always installed in the venv
 			text = text[len('--user'):].strip()
+			logger.warning(f'"--user" ignored for "{text}" - it will be installed in the plugin venv')
 
 		try:
 			req = Requirement(text)
@@ -242,9 +236,8 @@ class Dependency:
 			return None
 
 		# Standard PyPi dependency
-		dep.type = cls.DepTypes.PYPI
 		extras = f'[{",".join(sorted(req.extras))}]' if req.extras else ''
-		dep.package = user + req.name + extras
+		dep.package = req.name + extras
 		dep.comparator = str(req.specifier)  # e.g. '>=1.2,<2.0' or '' if none
 		dep.version = ''  # full condition is held in comparator
 
@@ -277,8 +270,6 @@ def createVenvFiles(pythonFile, envPath):
 	# Create the path change file to ensure site-packages is at the front of sys.path
 	pyfile = (
 			f'''import sys\n'''
-			f'''print(f'{sitePackagesPath}')\n'''
-			f'''print('is now at the front of sys.path in venv')\n'''
 			f'''sys.path.remove('{sitePackagesPath}')\n'''
 			f'''sys.path.insert(0, '{sitePackagesPath}')\n'''
 			)
@@ -366,7 +357,7 @@ def createLogfile(logfilename, fallback_logfilename):
 		f_handler = logging.FileHandler(fallback_logfilename, mode='w', encoding='utf-8')
 		logfilename = fallback_logfilename
 
-	f_format = logging.Formatter(f'''"%(message)s"''')
+	f_format = logging.Formatter('%(message)s')
 	f_handler.setFormatter(f_format)
 	logger.addHandler(f_handler)
 	logger.info(f'Log file created at:\n{logfilename}')
@@ -375,9 +366,9 @@ def validateParams():
 	parser = argparse.ArgumentParser(
 		description='pipInstall2')
 	# Environment
-	parser.add_argument('-m', type=str, nargs=1, default=[],
-						help='module path')
-	parser.add_argument('-p', type=str, nargs=1, default=[], help='plugin path')
+	parser.add_argument('-m', type=str, nargs=1, default=[None],
+						help='manifest file')
+	parser.add_argument('-p', type=str, nargs=1, default=[None], help='plugin path')
 
 	args = vars(parser.parse_args())  # Save as a dict
 
@@ -386,20 +377,16 @@ def validateParams():
 
 	if mFile is None:
 		print('Exiting: No manifest file (-m) was provided')
-		#logger.critical('Exiting: No manifest file (-m) was provided')
 		shutDown(ExitCodes.NO_MANIFEST_PROVIDED)
 	elif not os.path.isfile(mFile):
 		print(f'Exiting: Manifest file "{mFile}" does not exist')
-		#logger.critical(f'Exiting: Manifest file "{mFile}" does not exist')
 		shutDown(ExitCodes.MANIFEST_DOES_NOT_EXIST)
 
 	if pPath is None:
 		print('Exiting: No plugin path (-p) was provided')
-		#logger.critical('Exiting: No plugin path (-p) was provided')
 		shutDown(ExitCodes.NO_PLUGIN_PROVIDED)
 	elif not os.path.isdir(pPath):
 		print(f'Exiting: Plugin path "{pPath}" does not exist')
-		#logger.critical(f'Exiting: Plugin file "{mFile}" does not exist')
 		shutDown(ExitCodes.PLUGIN_DOES_NOT_EXIST)
 
 	return mFile, pPath
@@ -413,7 +400,7 @@ def parseVersion(request) -> Dependency:
 	if dep is None:
 		shutDown(ExitCodes.INVALID_DEPENDENCY)
 	
-	logger.debug(f'Parsed dependency: uri="{dep.uri}", package="{dep.package}", comparator="{dep.comparator}", version="{dep.version}", type="{dep.type.name}"')
+	logger.debug(f'Parsed dependency: package="{dep.package}", comparator="{dep.comparator}"')
 
 	if dep.comparator is None or dep.comparator == '':
 		dep.comparator = 'None'
@@ -456,6 +443,39 @@ def createPythonEnv(envPath):
 	return
 
 
+def importPackaging():
+	try:
+		import packaging.requirements, packaging.markers, packaging.specifiers
+		return True, ''
+	except ImportError as e:
+		return False, str(e)
+
+def checkPackaging(pythonFile, sitePath):
+	"""
+	packaging is used to parse modules, markers and version conditions
+	If it is not available in the system python, install it into the venv
+	and add the venv site-packages to the end of this program's sys.path
+	"""
+	ok, err = importPackaging()
+	if ok:
+		return
+	logger.info(f'The python "packaging" module is not available ({err}) - installing it into the venv')
+	# --ignore-installed so a copy is put in the venv even if the venv can see another one
+	cmd = f'{pythonFile} -m {PIP} install --ignore-installed packaging {pipQuiet}'
+	installed, out, perr = runPip(cmd)
+	if installed:
+		if sitePath not in sys.path:
+			sys.path.append(sitePath)
+		importlib.invalidate_caches()
+		ok, err = importPackaging()
+	else:
+		err = pipErrors(perr)
+	if not ok:
+		logger.critical(f'The python "packaging" module is required but could not be installed or imported:\n{err}\n'
+				  f'Install it e.g. sudo apt install python3-packaging')
+		shutDown(ExitCodes.PACKAGING_NOT_AVAILABLE)
+	logger.info('packaging installed in the venv and will be used from there')
+
 def getModuleList(mFile):
 	with open(mFile) as jsonfile:
 		try:
@@ -484,9 +504,12 @@ def checkForRequirementsFiles(moduleList, pluginPath):
 	updatedModuleList = []
 	for module in moduleList:
 		logger.debug(f'Checking module entry: {module}')
-		if module.endswith('.txt') and os.path.isfile(os.path.normpath(os.path.join(pluginPath, 'dsf',module))):
+		if module.endswith('.txt'):
 			# It's a requirements file
 			reqfile = os.path.normpath(os.path.join(pluginPath,'dsf', module))
+			if not os.path.isfile(reqfile):
+				logger.critical(f'Requirements file "{module}" was not found at:\n{reqfile}')
+				shutDown(ExitCodes.REQUIREMENTS_FILE_NOT_FOUND)
 			logger.debug(f'Processing requirements file: {reqfile}')
 			with open(reqfile, 'r') as f:
 				for line in f:
@@ -536,7 +559,6 @@ def getFreezeList(pythonFile) -> str:
 	return request
 
 def getModuleVersion(m, pythonFile, sitePath, freezeList):
-	m = m.replace('--user','').strip() # just the module name
 	# Remove any extras (stuff in square brackets)
 	regex = r'(\[(.*?)\])'
 	result = re.findall(regex, m, flags=re.IGNORECASE)
@@ -616,17 +638,12 @@ def installModule(mod, comp, val, pythonFile):
 	request = requestString(mod, comp, val)
 
 	logger.info(f'\nAttempting install of: {request}\n')
-	# adjust for user install
-	user = ''
-	if request.startswith('--user'):
-		request = request.replace('--user','').strip()
-		user = '--user'
 
-	cmd = f'{pythonFile} -m {PIP} install {user} "{request}" {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install "{request}" {pipQuiet}'
 	ok, out, err = runPip(cmd)
 
 	if not ok:  # module could not be installed
-		logger.info(f'Module: {user} {request} could not be installed\n{pipErrors(err)}')
+		logger.info(f'Module: {request} could not be installed\n{pipErrors(err)}')
 		return False
 	logger.debug(f'Result was ==> \n{out}')
 	return True
@@ -731,11 +748,9 @@ def processRequests(modulerequests, pythonFile, venvPath):
 	2) pip --dry-run of everything together - logs what will actually be installed
 	3) single pip install -r of everything together
 	4) if 2) or 3) fails, install one module at a time so the others still get installed
-	--user entries cannot go in a requirements file so are always installed one at a time
 	"""
-	toInstall = selectRequests(modulerequests)
-	together = [i for i in toInstall if not modulerequests[i][0].startswith('--user')]
-	oneAtATime = [i for i in toInstall if i not in together]
+	together = selectRequests(modulerequests)
+	oneAtATime = []
 
 	if together:
 		requests = [requestString(*modulerequests[i][0:3]) for i in together]
@@ -749,12 +764,12 @@ def processRequests(modulerequests, pythonFile, venvPath):
 				setResult(modulerequests, i, 'Succeeded')
 		else:
 			logger.info('\nFalling back to installing modules one at a time')
-			oneAtATime = together + oneAtATime
+			oneAtATime = together
 
 	for i in sorted(oneAtATime):
 		mod_name, comp, val, current_version = modulerequests[i][0:4]
 		install_ok = installModule(mod_name, comp, val, pythonFile)
-		if install_ok or current_version == 'Installed':
+		if install_ok:
 			setResult(modulerequests, i, 'Succeeded')
 		else:
 			setResult(modulerequests, i, 'Failed')
@@ -865,9 +880,11 @@ def reportResults(builtinList, skippedList, installedList, failedList):
 			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}')
 
 def shutDown(code):
-	logger.info('---------------------------------------')
-	logger.info(f'Exiting with code {code}')
-	logger.info('---------------------------------------')
+	# logger does not exist yet if called while validating arguments
+	out = logger.info if 'logger' in globals() else print
+	out('---------------------------------------')
+	out(f'Exiting with code {code}')
+	out('---------------------------------------')
 	sys.exit(code.value)
 
 
@@ -903,17 +920,20 @@ def main(progName):
 		logger.setLevel(logging.DEBUG)
 		pipQuiet = ''
 
-	# Check moduleList for requirements files
-	moduleList = checkForRequirementsFiles(moduleList, pluginPath)
-
-	# Drop modules whose environment marker does not match this platform
-	moduleList = applyEnvironmentMarkers(moduleList)
-
 	# Ensure site-packages are at the front of sys.path in venv
 	sitePath = createVenvFiles(pythonFile, venvPath)
 
 	# python script to test if module is installed and get its version
 	createImportTestFile(sitePath)
+
+	# packaging is needed to parse the module list - installed into the venv if missing
+	checkPackaging(pythonFile, sitePath)
+
+	# Check moduleList for requirements files
+	moduleList = checkForRequirementsFiles(moduleList, pluginPath)
+
+	# Drop modules whose environment marker does not match this platform
+	moduleList = applyEnvironmentMarkers(moduleList)
 
 	# Resolve the requested modules to a name and version
 	# Create a list of modules to instal and their current versions
