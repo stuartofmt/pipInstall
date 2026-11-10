@@ -55,6 +55,13 @@ Version 2.1.2 - Modified by Stuart Strolin
 - modules whose marker does not apply to the current platform are skipped
 - applies to entries in plugin.json and in requirements files
 
+Version 2.3.0 - Modified by Stuart Strolin
+- Added support for version ranges and all PEP 440 comparisons e.g. `numpy>=1.2,<2.0`  `numpy!=1.3`  `numpy==1.*`
+- spaces are allowed around comparisons e.g. `numpy >= 1.2`
+- `~=` is no longer converted to `>=` (pip handles it correctly)
+- module parsing now uses packaging.requirements instead of a custom regex
+- modules already installed at a version that meets the condition are skipped instead of reinstalled
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
@@ -64,20 +71,26 @@ Both `<manifest name>` and `<plugin path>` are fully qualified
 A virtual environment will be created for python at
 `<plugin Path>`/venv
 
-If version number is supplied it must use one of the following comparisons:
-`==`
-`>=`
-`<=`
-`>`
-`<`
-`~=    Note ~= will be converted to >=`
+A version condition can be supplied using any standard (PEP 440) comparison:
+`==` `!=` `>=` `<=` `>` `<` `~=` `===`
+
+Several conditions can be combined with commas, and spaces are allowed e.g.
+
+```
+numpy>=1.2,<2.0
+pkg[extra] >= 1, != 1.3
+numpy==1.*
+--user dsf-python>=3.6
+```
 
 Rules:
 1. If module is built-in it will be ignored
 2. If module is already installed and no version is requested it will be ignored
 3. If module is not installed it will be installed
 	3a. If no version - it will be installed at the latest version
-	3b. If version is requested it will be installed at that version
+	3b. If version is requested it will be installed at a version that meets the condition
+	3c. If module is already installed at a version that meets the condition it will be ignored.
+	If the installed version does not meet the condition (or cannot be determined) it will be installed
 
 4. Installed modules will be placed in site-packages of the virtual environment
 5. site-packages will be placed at the front of sys.path when the venv python interpreter is used

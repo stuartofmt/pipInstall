@@ -14,20 +14,21 @@ Both <manifest file. and <plugin path> are fully qualified
 A virtual environment will be created for python at
 <plugin Path>/VENV_FOLDER   (see constant section)
 
-If version number is supplied it must use one of the following comparisons:
-==
->=
-<=
->
-<
-~=    Note ~= will be converted to >=
+A version condition can be supplied using any standard (PEP 440) comparison:
+==  !=  >=  <=  >  <  ~=  ===
+Several conditions can be combined with commas and spaces are allowed e.g.
+numpy>=1.2,<2.0
+pkg[extra] >= 1, != 1.3
+numpy==1.*
 
 Rules:
 1) If module is built-in it will be ignored
 2) If module is already installed and no version is requested it will be ignored
 3) If module is not installed it will be installed
 	3a) If no version - it will be installed at the latest version
-	3b) If version is requested it will be installed at that version
+	3b) If version is requested it will be installed at a version that meets the condition
+	3c) If module is already installed at a version that meets the condition it will be ignored
+	If the installed version does not meet the condition (or cannot be determined) it will be installed
 
 4) Installed modules will be placed in site-packages of the virtual environment
 5) site-packages will be placed at the front of sys.path when the venv python interpreter is used
@@ -87,6 +88,13 @@ Version 2.1.2 - Modified by Stuart Strolin
 Added support for PEP 508 environment markers e.g. picamera2; sys_platform == "linux"
 modules whose marker does not apply to the current platform are skipped
 applies to entries in plugin.json and in requirements files
+
+Version 2.3.0 - Modified by Stuart Strolin
+Added support for version ranges and all PEP 440 comparisons e.g. numpy>=1.2,<2.0  numpy!=1.3  numpy==1.*
+spaces are allowed around comparisons e.g. numpy >= 1.2
+~= is no longer converted to >= (pip handles it correctly)
+module parsing now uses packaging.requirements instead of a custom regex
+modules already installed at a version that meets the condition are skipped instead of reinstalled
 """
 
 
@@ -112,7 +120,7 @@ from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.1.2'
+THIS_VERSION = '2.3.0'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
@@ -154,27 +162,9 @@ class modType(Enum):
 	NOTINSTALLED = 'Not Installed'
 
 class Dependency:
-	# Added supports for square brackets in the form of package[extra] and git dependencies
-	# Added support for period in name
-	# Note: space at end of first character set to get things like --user dsf-python
-	regex = r'(^([\w\-_\[\]\. ]+)((==|~=|>=|<=|>|<)((\d+!)?(\d)+(\.\d+)*(-?(a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?))?$)|(^git\+.*$)'
-
-	#fOLLOWING ARE THE GROUP INDICES FOR THE REGEX
-	class RegexGroups(Enum):
-		PYPI = 0
-		PACKAGE_NAME = 1
-		VERSION_WITH_COMPARATOR = 2
-		COMPARATOR = 3
-		VERSION = 4
-		VERSION_EPOCH = 5
-		VERSION_MAJOR = 6
-		VERSION_MINOR = 7
-		VERSION_PRE = 8
-		VERSION_PRE_TYPE = 9
-		VERSION_POST = 10
-		VERSION_DEV = 11
-		GIT = 12
-
+	# Parsing uses packaging.requirements (PEP 508) so names, extras and version
+	# conditions (including ranges e.g. >=1.2,<2.0) follow the same rules as pip
+	# A leading --user (e.g. --user dsf-python) and git+ urls are handled separately
 
 	class DepTypes(Enum):
 		PYPI = auto()
@@ -196,52 +186,44 @@ class Dependency:
 
 	@classmethod
 	def parse(cls, text: str) -> Optional['Dependency']:
-		"""Convert text from plugin.json sbcPythonDependencies into object
+		"""Convert text from sbcPythonDependencies (or a requirements file) into object
 		Args:
 			text (str): line from sbcPythonDependencies
 		"""
-		result = re.findall(cls.regex, text)
+		from packaging.requirements import Requirement, InvalidRequirement
 
-		if len(result) == 0:
-			logger.error(f"Could not find package name in \"{text}\"")
-			return None
-
-		result = list(result[0])  # Convert tuple to list
-
+		text = text.strip()
 		dep = Dependency()
 
-		if result[cls.RegexGroups.PYPI.value] != '':
-			# Standard PyPi dependency
-			if result[cls.RegexGroups.COMPARATOR.value] == '~=':
-				result[cls.RegexGroups.COMPARATOR.value] = '>='
-
-			dep.type = cls.DepTypes.PYPI
-
-			# Convert to canonical name format
-			name = str(result[cls.RegexGroups.PACKAGE_NAME.value])
-			
-			# use official pipi convention
-			"""
-			if name.lower().startswith('--user'):  # take care of packages that are installed --user
-				name = name.replace('--user', '')
-				name = name.strip()
-				name = '--user ' + name
-			"""
-			dep.package = name
-
-			dep.comparator = str(result[cls.RegexGroups.COMPARATOR.value])
-			dep.version = str(result[cls.RegexGroups.VERSION.value])
-
-		elif result[cls.RegexGroups.GIT.value] != '':
+		if text.startswith('git+'):
 			# Git dependency
 			dep.type = cls.DepTypes.GIT
-			dep.package = str(result[cls.RegexGroups.GIT.value])
+			dep.package = text
 			dep.comparator = None
 			dep.version = None
-		else:
-			# Should be impossible to get here
-			logger.error(f"Could not find package name in \"{text}\"")
+			return dep
+
+		user = ''
+		if text.startswith('--user'):  # take care of packages that are installed --user
+			user = '--user '
+			text = text[len('--user'):].strip()
+
+		try:
+			req = Requirement(text)
+		except InvalidRequirement as e:
+			logger.error(f"Could not find package name in \"{text}\"\n{e}")
 			return None
+
+		if req.url:
+			logger.error(f"Unsupported url form in \"{text}\" - use git+<url> instead")
+			return None
+
+		# Standard PyPi dependency
+		dep.type = cls.DepTypes.PYPI
+		extras = f'[{",".join(sorted(req.extras))}]' if req.extras else ''
+		dep.package = user + req.name + extras
+		dep.comparator = str(req.specifier)  # e.g. '>=1.2,<2.0' or '' if none
+		dep.version = ''  # full condition is held in comparator
 
 		return dep
 
@@ -402,10 +384,6 @@ def validateParams():
 
 def parseVersion(request) -> Dependency:
 	# Get the module name and any conditional and version
-	
-	if ',' in request:
-		logger.critical(f'Unsupported Conditional in: {request}')
-		shutDown(ExitCodes.UNSUPPORTED_CONDITIONAL)
 	
 	dep = Dependency.parse(request)
 
@@ -628,6 +606,19 @@ def parseRequests(mList, pythonFile, sitePath,freezeList):
 		modulerequests.append([mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version])
 	return modulerequests
 
+def versionSatisfies(current_version, current_type, condition):
+	# True if the installed version is known and meets the condition e.g. >=1.2,<2.0
+	if current_type not in (modType.PIPWITHVERSION.value, modType.INSTALLEDWITHVERSION.value):
+		return False
+	try:
+		from packaging.specifiers import SpecifierSet
+		ok = SpecifierSet(condition).contains(current_version, prereleases=True)
+	except Exception as e:
+		logger.debug(f'Could not compare version "{current_version}" with "{condition}": {e}')
+		return False
+	logger.debug(f'Installed version "{current_version}" {"meets" if ok else "does not meet"} "{condition}"')
+	return ok
+
 def processRequests(modulerequests, pythonFile, sitePath):
 	for idx, request in enumerate(modulerequests):
 		mod_name, requested_version_comp, requested_version_val,\
@@ -639,6 +630,8 @@ def processRequests(modulerequests, pythonFile, sitePath):
 		if current_type == modType.BUILTIN.value:
 			install_result = 'Builtin'
 		elif (current_type == modType.INSTALLEDWITHVERSION.value or current_type == modType.INSTALLEDNOVERSION.value) and requested_version_comp == 'None':
+			install_result = 'Skipped'
+		elif requested_version_comp != 'None' and versionSatisfies(current_version, current_type, requested_version_comp):
 			install_result = 'Skipped'
 		else:
 			need_install = True
@@ -719,14 +712,16 @@ def reportResults(builtinList, skippedList, installedList, failedList):
 			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> Ignored')
 
 	if (len(skippedList) > 0):	
-		logger.info('\nThese modules were Skipped (Already installed - no version requested):')
+		logger.info('\nThese modules were Skipped (Already installed - no version requested or version condition already met):')
 		for req in skippedList:
 			mod_name, requested_version_comp, requested_version_val,\
 			current_version, current_type, install_result, install_version \
 			= unpackRequestList(req)
 			if current_version == 'None':
 				current_version = ''
-			logger.info(f'\t{mod_name} ==> {current_type} {current_version}')	
+			if requested_version_comp == 'None':
+				requested_version_comp = ''
+			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> {current_type} {current_version}')	
 
 	if (len(installedList) > 0):
 		logger.info('\nThese modules were successfully installed / updated:')
