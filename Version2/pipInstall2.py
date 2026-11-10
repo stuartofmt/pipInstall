@@ -23,7 +23,7 @@ numpy==1.*
 
 Rules:
 1) If module is built-in it will be ignored
-2) If module is already installed and no version is requested it will be ignored
+2) If module is already installed and no version is requested it will be ignored (it is not upgraded)
 3) If module is not installed it will be installed
 	3a) If no version - it will be installed at the latest version
 	3b) If version is requested it will be installed at a version that meets the condition
@@ -33,6 +33,14 @@ Rules:
 4) Installed modules will be placed in site-packages of the virtual environment
 5) site-packages will be placed at the front of sys.path when the venv python interpreter is used
 therefore installed modules will take precedence over system modules
+
+Install steps:
+a) pip install --dry-run (with --report) of all modules that need installing - logs what will actually be installed
+	including dependencies. The report is kept at <plugin Path>/venv/pipInstall_report.json
+b) a single pip install -r of all of them, so pip resolves them together (consistent versions)
+c) if a) or b) fails, the modules are installed one at a time so the others still install,
+	and each failure is reported with pip's error message
+--user entries cannot go in a requirements file so are always installed one at a time
 
 Exit Codes:
 
@@ -100,6 +108,13 @@ Version 2.3.1 - Modified by Stuart Strolin
 Trailing comments are ignored e.g. numpy==1.26  # needed for X
 a '#' is treated as a comment when at the start or preceded by whitespace (pip rule)
 applies to entries in plugin.json (including --verbose) and in requirements files
+
+Version 2.3.2 - Modified by Stuart Strolin
+pip --dry-run (with --report) logs what will actually be installed, including dependencies
+modules are installed together with a single pip install -r so pip resolves them consistently
+if that fails, falls back to installing one module at a time and reports each failure with pip's error
+removed --force-reinstall and --no-cache-dir (dependencies were reinstalled and re-downloaded every time)
+already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
 """
 
 
@@ -125,7 +140,7 @@ from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.3.1'
+THIS_VERSION = '2.3.2'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
@@ -134,6 +149,8 @@ LOGNAME = 'pipInstall2.log'
 FALLBACK_LOGFILENAME = os.path.normpath(os.path.join(os.getcwd(), LOGNAME))
 PATHFILENAME = 'plugin_path_change'
 IMPORTTESTFILE = 'import_test.py'
+REQFILENAME = 'pipInstall_requirements.txt'  # combined requirements written to the venv folder
+REPORTFILENAME = 'pipInstall_report.json'  # pip --dry-run report written to the venv folder
 pipQuiet = '-qq' #Reduce pip output
 COMMENT_RE = re.compile(r'(^|\s)#.*$') # '#' at start or preceded by whitespace (pip rule)
 
@@ -578,11 +595,25 @@ def getModuleVersion(m, pythonFile, sitePath, freezeList):
 	return 'None', modType.NOTINSTALLED.value
 
 
+def runPip(cmd):
+	# Run a pip command without raising - returns (ok, stdout, stderr)
+	logger.debug(f'Running ==> {cmd}')
+	try:
+		result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+	except OSError as e:
+		return False, '', str(e)
+	return result.returncode == 0, result.stdout, result.stderr
+
+def pipErrors(stderr):
+	# Just the ERROR lines from pip output (or everything if there are none)
+	lines = [line for line in stderr.splitlines() if line.startswith('ERROR')]
+	return '\n'.join(lines) if lines else stderr.strip()
+
+def requestString(mod, comp, val):
+	return mod if comp == 'None' else f'{mod}{comp}{val}'
+
 def installModule(mod, comp, val, pythonFile):
-	if comp != 'None':
-		request = f'{mod}{comp}{val}'
-	else:
-		request = mod
+	request = requestString(mod, comp, val)
 
 	logger.info(f'\nAttempting install of: {request}\n')
 	# adjust for user install
@@ -591,21 +622,60 @@ def installModule(mod, comp, val, pythonFile):
 		request = request.replace('--user','').strip()
 		user = '--user'
 
-	if comp == 'None':
-		cmd = f'{pythonFile} -m {PIP} install {user} "{request}" --no-cache-dir --upgrade --force-reinstall {pipQuiet}'
-	else:
-		cmd = f'{pythonFile} -m {PIP} install {user} "{request}" --no-cache-dir --force-reinstall {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install {user} "{request}" {pipQuiet}'
+	ok, out, err = runPip(cmd)
 
-	result = runsubprocess(cmd)
-	
-	if result == False:  # module could not be installed
-		logger.debug(f'Module: {user} {request} could not be installed')
+	if not ok:  # module could not be installed
+		logger.info(f'Module: {user} {request} could not be installed\n{pipErrors(err)}')
 		return False
-	else:
-		logger.debug(f'Command was ==> \n{cmd}')
-		logger.debug(f'Result was ==> \n{result}')
-
+	logger.debug(f'Result was ==> \n{out}')
 	return True
+
+def dryRun(requests, pythonFile, venvPath):
+	"""
+	Write the requests to a requirements file and ask pip what it would install
+	Logs the planned installs (requested modules and their dependencies)
+	Returns (ok, reqfile)
+	"""
+	reqfile = os.path.normpath(os.path.join(venvPath, REQFILENAME))
+	reportfile = os.path.normpath(os.path.join(venvPath, REPORTFILENAME))
+	with open(reqfile, 'w') as f:
+		f.write('\n'.join(requests) + '\n')
+	logger.debug(f'Requirements written to {reqfile}:\n' + '\n'.join(requests))
+
+	cmd = f'{pythonFile} -m {PIP} install --dry-run --report "{reportfile}" -r "{reqfile}" {pipQuiet}'
+	ok, out, err = runPip(cmd)
+	if not ok:
+		logger.info(f'Dry run failed - pip could not resolve the requested modules together:\n{pipErrors(err)}')
+		return False, reqfile
+
+	try:
+		with open(reportfile) as f:
+			items = json.load(f).get('install', [])
+	except (OSError, ValueError) as e:
+		logger.info(f'Dry run succeeded but the report could not be read: {e}')
+		return True, reqfile
+
+	if not items:
+		logger.info('Dry run: nothing needs to be installed - all requirements are already satisfied')
+	else:
+		logger.info('Dry run: pip will install the following:')
+		for item in sorted(items, key=lambda x: (not x.get('requested', False), x.get('metadata', {}).get('name', '').lower())):
+			md = item.get('metadata', {})
+			kind = 'requested' if item.get('requested') else 'dependency'
+			logger.info(f'\t{md.get("name", "?")}=={md.get("version", "?")}  ({kind})')
+	logger.debug(f'Full dry run report: {reportfile}')
+	return True, reqfile
+
+def installRequirements(reqfile, pythonFile):
+	# Install everything with a single pip call so pip resolves all modules together
+	cmd = f'{pythonFile} -m {PIP} install -r "{reqfile}" {pipQuiet}'
+	ok, out, err = runPip(cmd)
+	if not ok:
+		logger.info(f'Combined install failed:\n{pipErrors(err)}')
+	else:
+		logger.debug(f'Result was ==> \n{out}')
+	return ok
 
 def parseRequests(mList, pythonFile, sitePath,freezeList):
 	modulerequests = []
@@ -630,32 +700,64 @@ def versionSatisfies(current_version, current_type, condition):
 	logger.debug(f'Installed version "{current_version}" {"meets" if ok else "does not meet"} "{condition}"')
 	return ok
 
-def processRequests(modulerequests, pythonFile, sitePath):
+def selectRequests(modulerequests):
+	# Apply the rules - mark Builtin / Skipped and return the indices that need installing
+	installedTypes = (modType.PIPWITHVERSION.value, modType.PIPNOVERSION.value,
+				   modType.INSTALLEDWITHVERSION.value, modType.INSTALLEDNOVERSION.value)
+	toInstall = []
 	for idx, request in enumerate(modulerequests):
 		mod_name, requested_version_comp, requested_version_val,\
 		current_version, current_type, install_result, install_version \
 		= unpackRequestList(request)
 
-		#Rules to determine if we need to install
-		need_install = False
 		if current_type == modType.BUILTIN.value:
 			install_result = 'Builtin'
-		elif (current_type == modType.INSTALLEDWITHVERSION.value or current_type == modType.INSTALLEDNOVERSION.value) and requested_version_comp == 'None':
+		elif current_type in installedTypes and requested_version_comp == 'None':
 			install_result = 'Skipped'
 		elif requested_version_comp != 'None' and versionSatisfies(current_version, current_type, requested_version_comp):
 			install_result = 'Skipped'
 		else:
-			need_install = True
+			toInstall.append(idx)
 
-		if need_install:
-			install_ok = installModule(mod_name, requested_version_comp, requested_version_val, pythonFile)
-			if install_ok or current_version == 'Installed':
-				install_result = 'Succeeded'
-				#install_version, _ = getModuleVersion(mod_name, pythonFile, sitePath,freezeList)
-			else:
-				install_result = 'Failed'
-		
 		modulerequests[idx]= [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
+	return toInstall
+
+def setResult(modulerequests, idx, install_result):
+	modulerequests[idx][5] = install_result
+
+def processRequests(modulerequests, pythonFile, venvPath):
+	"""
+	1) Apply the rules to decide what needs installing
+	2) pip --dry-run of everything together - logs what will actually be installed
+	3) single pip install -r of everything together
+	4) if 2) or 3) fails, install one module at a time so the others still get installed
+	--user entries cannot go in a requirements file so are always installed one at a time
+	"""
+	toInstall = selectRequests(modulerequests)
+	together = [i for i in toInstall if not modulerequests[i][0].startswith('--user')]
+	oneAtATime = [i for i in toInstall if i not in together]
+
+	if together:
+		requests = [requestString(*modulerequests[i][0:3]) for i in together]
+		logger.info('\n\nChecking what pip will install (dry run):')
+		ok, reqfile = dryRun(requests, pythonFile, venvPath)
+		if ok:
+			logger.info('\nInstalling all modules together (single pip install -r):')
+			ok = installRequirements(reqfile, pythonFile)
+		if ok:
+			for i in together:
+				setResult(modulerequests, i, 'Succeeded')
+		else:
+			logger.info('\nFalling back to installing modules one at a time')
+			oneAtATime = together + oneAtATime
+
+	for i in sorted(oneAtATime):
+		mod_name, comp, val, current_version = modulerequests[i][0:4]
+		install_ok = installModule(mod_name, comp, val, pythonFile)
+		if install_ok or current_version == 'Installed':
+			setResult(modulerequests, i, 'Succeeded')
+		else:
+			setResult(modulerequests, i, 'Failed')
 
 	return modulerequests
 
@@ -821,7 +923,7 @@ def main(progName):
 	moduleRequests = parseRequests(moduleList, pythonFile, sitePath,freezeList)
 
 	# Process the requests and install modules as required
-	moduleRequests = processRequests(moduleRequests, pythonFile, sitePath)
+	moduleRequests = processRequests(moduleRequests, pythonFile, venvPath)
 
 	logger.info('\n\nChecking installed versions after install:')	
 	freezeList = getFreezeList(pythonFile)  # Get updated freeze list after parsing requests

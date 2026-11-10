@@ -67,6 +67,13 @@ Version 2.3.1 - Modified by Stuart Strolin
 - a `#` is treated as a comment when at the start or preceded by whitespace (same rule as pip)
 - applies to entries in plugin.json (including --verbose) and in requirements files
 
+Version 2.3.2 - Modified by Stuart Strolin
+- pip --dry-run (with --report) logs what will actually be installed, including dependencies
+- modules are installed together with a single `pip install -r` so pip resolves them consistently
+- if that fails, falls back to installing one module at a time and reports each failure with pip's error
+- removed `--force-reinstall` and `--no-cache-dir` (dependencies were reinstalled and re-downloaded every time)
+- already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
+
 
 Useage:
 Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
@@ -90,7 +97,7 @@ numpy==1.*
 
 Rules:
 1. If module is built-in it will be ignored
-2. If module is already installed and no version is requested it will be ignored
+2. If module is already installed and no version is requested it will be ignored (it is not upgraded)
 3. If module is not installed it will be installed
 	3a. If no version - it will be installed at the latest version
 	3b. If version is requested it will be installed at a version that meets the condition
@@ -100,6 +107,14 @@ Rules:
 4. Installed modules will be placed in site-packages of the virtual environment
 5. site-packages will be placed at the front of sys.path when the venv python interpreter is used
 therefore installed modules will take precedence over system modules
+
+Install steps:
+
+1. `pip install --dry-run --report` of all modules that need installing. This logs what will actually be installed, including dependencies. The report is kept at `<plugin Path>/venv/pipInstall_report.json`
+2. a single `pip install -r` of all of them, so pip resolves them together (consistent versions)
+3. if 1 or 2 fails, the modules are installed one at a time so the others still install, and each failure is reported with pip's error message
+
+`--user` entries cannot go in a requirements file so are always installed one at a time
 
 Environment markers:
 
