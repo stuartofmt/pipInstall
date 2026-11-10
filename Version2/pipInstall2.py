@@ -46,89 +46,9 @@ Exit Codes:
 
 See class ExitCodes below.
 
-Verson:
-1.0.0
-Initial Release by Stuart Strolin
+Release notes:
 
-Version 1.1.0 - Modified by Andy at Duet3d
-
-Version 1.1.1 - Modified by Stuart Strolin
-Fixed issue handling modules with no version number e.g shlex
-
-Version 1.1.2 - Modified by Stuart Strolin
-Added flags so venv has upgraded pip and is cleared each time
-changed pip list to pip freeze to get version numbers
-added --force-reinstall to pip install command as a safety measure
-added quotes around module name in pip install to avoid redirects e.g. module>2
-added logfile
-added --verbose flag - first (dummy) entry in manifest file 'sbcPythonDependencies'
-replaced pkg_resources (deprecated) version parsing with packaging.version
-
-Version 2.0.0 - Modified by Stuart Strolin
-Restructured for ease of maintenance
-Conditionally import version from packaging.version for python 3.13 and above
-logfile location is ./venv for the plugin with fallback to cwd (for testing)
-logfile name is pipInstall2.log
-added .pth and .py file to ensure site-packages is at front of sys.path
-externalize function to get updated module version from venv after install
-improved logging messages
-modules can be specified as one of more  txt file(s) (e.g requirements.txt) in plugin.json
-requirements files need to be located in the dsf folder (i.e. same folder as python files)
-supports modules from git e.e. git+https://github.com/pallets/flask.git
-
-Version 2.0.1 - Modified by Stuart Strolin
-Added defensive code for unexpected error in output from import test script
-
-Version 2.0.2 - Modified by Stuart Strolin
-Added support for extras in module names (use of square brackets) e.g. package[standard]
-
-Version 2.1.0 - Modified by Stuart Strolin
-Added support for period in name e.g. keyrings.alt
-Added support for space in name
-Added support for control arguments e.g. --user in e.g. --user dsf-python
-Changed version determination to give better insight
-
-Version 2.1.1 - Modified by Stuart Strolin
-changed logger to initially output to console
-then after arguments passed add logfile
-
-Version 2.1.2 - Modified by Stuart Strolin
-Added support for PEP 508 environment markers e.g. picamera2; sys_platform == "linux"
-modules whose marker does not apply to the current platform are skipped
-applies to entries in plugin.json and in requirements files
-
-Version 2.3.0 - Modified by Stuart Strolin
-Added support for version ranges and all PEP 440 comparisons e.g. numpy>=1.2,<2.0  numpy!=1.3  numpy==1.*
-spaces are allowed around comparisons e.g. numpy >= 1.2
-~= is no longer converted to >= (pip handles it correctly)
-module parsing now uses packaging.requirements instead of a custom regex
-modules already installed at a version that meets the condition are skipped instead of reinstalled
-
-Version 2.3.1 - Modified by Stuart Strolin
-Trailing comments are ignored e.g. numpy==1.26  # needed for X
-a '#' is treated as a comment when at the start or preceded by whitespace (pip rule)
-applies to entries in plugin.json (including --verbose) and in requirements files
-
-Version 2.3.2 - Modified by Stuart Strolin
-pip --dry-run (with --report) logs what will actually be installed, including dependencies
-modules are installed together with a single pip install -r so pip resolves them consistently
-if that fails, falls back to installing one module at a time and reports each failure with pip's error
-removed --force-reinstall and --no-cache-dir (dependencies were reinstalled and re-downloaded every time)
-already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
-
-Version 2.3.3 - Modified by Stuart Strolin
-argument errors now exit with their exit codes (previously crashed with IndexError / NameError)
-the venv python no longer prints the site-packages path every time it starts
-a requirements file (.txt) that is not found in <plugin Path>/dsf now exits with code 13
-(previously it was treated as a module name and looked up on PyPI)
-if the packaging module is not available in the system python it is installed into the venv
-and used from there - exits with code 14 if that fails
-"--user" is now ignored (with a warning) - all modules are installed in the plugin venv
-(previously they were installed in the user site-packages, outside the venv)
-removed pkg_resources import (deprecated and unused)
-a failed install is no longer reported as succeeded for modules that import without version information
-removed unused code (sysconfig import, UNSUPPORTED_CONDITIONAL exit code, Dependency types and uri)
-log file lines are no longer wrapped in quotes
+See release-notes.md
 """
 
 
@@ -188,9 +108,9 @@ class modType(Enum):
 	BUILTIN = 'Builtin'
 	INSTALLEDWITHVERSION = 'already Installed with version'
 	INSTALLEDNOVERSION = 'already installed with no version number'
-	PIPWITHVERSION = 'installed by Pip with version'
-	PIPNOVERSION = 'installed by Pip with no Version number'
-	NOTINSTALLED = 'was not previously installed'
+	PIPWITHVERSION = 'previously installed by Pip with version'
+	PIPNOVERSION = 'previously installed by Pip with no Version number'
+	NOTINSTALLED = 'not previously installed'
 
 class Dependency:
 	# Parsing uses packaging.requirements (PEP 508) so names, extras and version

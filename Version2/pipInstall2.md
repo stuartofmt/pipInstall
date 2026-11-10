@@ -1,206 +1,221 @@
-# Python package installer for DSF
+# pipInstall2 - Python package installer for DSF plugins
 
-A python script to install python package dependencies for DSF plugins.
+pipInstall2 installs the Python packages a DSF plugin needs on the SBC. Each plugin gets its own Python virtual environment (venv), so packages for one plugin cannot break another plugin or the system Python.
 
-Verson:
-1.0.0
-Initial Release by Stuart Strolin
+DSF calls pipInstall2 when a plugin is installed, passing it the plugin's `plugin.json` and the plugin's folder. The packages to install come from the `sbcPythonDependencies` entry in `plugin.json`.
 
-Version 1.1.0 - Modified by Andy at Duet3d
+For changes between versions see [release-notes.md](release-notes.md).
 
-Version 1.1.1 - Modified by Stuart Strolin
-- Fixed issue handling modules with no version number e.g shlex
+## Recommended: list packages in a requirements file
 
-Version 1.1.2 - Modified by Stuart Strolin
-- Added flags so venv has upgraded pip and is cleared each time
-- changed pip list to pip freeze to get version numbers
-- added --force-reinstall to pip install command as a safety measure
-- added quotes around module name in pip install to avoid redirects e.g. module>2
-- added logfile
-- added --verbose flag - first (dummy) entry in manifest file 'sbcPythonDependencies'
-- replaced pkg_resources (deprecated) version parsing with packaging.version
+The preferred way to declare packages is to put **one or more requirements files** in `sbcPythonDependencies`, rather than a long list of packages directly in `plugin.json`.
 
-Version 2.0.0 - Modified by Stuart Strolin
-- Restructured for ease of maintenance
-- Conditionally import version from packaging.version for python 3.13 and above
-- logfile location is ./venv for the plugin with fallback to cwd (for testing)
-- logfile name is pipInstall2.log
-- added .pth and .py file to ensure site-packages is at front of sys.path
-- externalize function to get updated module version from venv after install
-- improved logging messages
-- modules can be specified as one of more txt file(s) (e.g requirements.txt) in plugin.json
-- requirements files need to be \located in the dsf folder (i.e. same folder as python files)
-- supports modules from git e.g. git+https://github.com/pallets/flask.git
+`plugin.json`:
 
-Version 2.0.1 - Modified by Stuart Strolin
-- Added defensive code for unexpected error in output from import test script
-
-Version 2.0.2 - Modified by Stuart Strolin
-- Added support for extras in module names (use of square brackets) e.g. package[standard]
-
-Version 2.0.3 - Modified by Stuart Strolin
-Added support for period in name e.g. keyrings.alt
-Added support for space in name and --user argument  e.g. --user dsf-python
-
-Version 2.1.0 - Modified by Stuart Strolin
-- Added support for control arguments e.g. --user in e.g. --user dsf-python
-- Changed version determination to give better insight
-
-Version 2.1.1 - Modified by Stuart Strolin
-- changed logger to initially output to console
-- then after arguments passed add logfile
-
-Version 2.1.2 - Modified by Stuart Strolin
-- Added support for PEP 508 environment markers e.g. `picamera2; sys_platform == "linux"`
-- modules whose marker does not apply to the current platform are skipped
-- applies to entries in plugin.json and in requirements files
-
-Version 2.3.0 - Modified by Stuart Strolin
-- Added support for version ranges and all PEP 440 comparisons e.g. `numpy>=1.2,<2.0`  `numpy!=1.3`  `numpy==1.*`
-- spaces are allowed around comparisons e.g. `numpy >= 1.2`
-- `~=` is no longer converted to `>=` (pip handles it correctly)
-- module parsing now uses packaging.requirements instead of a custom regex
-- modules already installed at a version that meets the condition are skipped instead of reinstalled
-
-Version 2.3.1 - Modified by Stuart Strolin
-- Trailing comments are ignored e.g. `numpy==1.26  # needed for X`
-- a `#` is treated as a comment when at the start or preceded by whitespace (same rule as pip)
-- applies to entries in plugin.json (including --verbose) and in requirements files
-
-Version 2.3.2 - Modified by Stuart Strolin
-- pip --dry-run (with --report) logs what will actually be installed, including dependencies
-- modules are installed together with a single `pip install -r` so pip resolves them consistently
-- if that fails, falls back to installing one module at a time and reports each failure with pip's error
-- removed `--force-reinstall` and `--no-cache-dir` (dependencies were reinstalled and re-downloaded every time)
-- already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
-
-Version 2.3.3 - Modified by Stuart Strolin
-- argument errors now exit with their exit codes (previously crashed with IndexError / NameError)
-- the venv python no longer prints the site-packages path every time it starts
-- a requirements file (.txt) that is not found in `<plugin Path>/dsf` now exits with code 13 (previously it was treated as a module name and looked up on PyPI)
-- if the `packaging` module is not available in the system python it is installed into the venv and used from there - exits with code 14 if that fails
-- `--user` is now ignored (with a warning) - all modules are installed in the plugin venv (previously they were installed in the user site-packages, outside the venv)
-- removed pkg_resources import (deprecated and unused)
-- a failed install is no longer reported as succeeded for modules that import without version information
-- removed unused code
-- log file lines are no longer wrapped in quotes
-
-
-Useage:
-Usage pipInstall -m `<manifesr name>` -p `< plugin path >`
-
-Both `<manifest name>` and `<plugin path>` are fully qualified
-
-A virtual environment will be created for python at
-`<plugin Path>`/venv
-
-A version condition can be supplied using any standard (PEP 440) comparison:
-`==` `!=` `>=` `<=` `>` `<` `~=` `===`
-
-Several conditions can be combined with commas, and spaces are allowed e.g.
-
-```
-numpy>=1.2,<2.0
-pkg[extra] >= 1, != 1.3
-numpy==1.*
+```json
+"sbcPythonDependencies": ["requirements.txt"]
 ```
 
-Rules:
-1. If module is built-in it will be ignored
-2. If module is already installed and no version is requested it will be ignored (it is not upgraded)
-3. If module is not installed it will be installed
-	3a. If no version - it will be installed at the latest version
-	3b. If version is requested it will be installed at a version that meets the condition
-	3c. If module is already installed at a version that meets the condition it will be ignored.
-	If the installed version does not meet the condition (or cannot be determined) it will be installed
+`dsf/requirements.txt` (in the same folder as the plugin's python files):
 
-4. Installed modules will be placed in site-packages of the virtual environment
-5. site-packages will be placed at the front of sys.path when the venv python interpreter is used
-therefore installed modules will take precedence over system modules
+```text
+# Web server
+uvicorn[standard] >= 0.35.0
+requests
 
-Install steps:
+# Camera support - Linux only
+picamera2; sys_platform == "linux"
 
-1. `pip install --dry-run --report` of all modules that need installing. This logs what will actually be installed, including dependencies. The report is kept at `<plugin Path>/venv/pipInstall_report.json`
-2. a single `pip install -r` of all of them, so pip resolves them together (consistent versions)
-3. if 1 or 2 fails, the modules are installed one at a time so the others still install, and each failure is reported with pip's error message
-
-`--user` is ignored (with a warning) - all modules are installed in the plugin venv
-
-Environment markers:
-
-A module can be made platform dependent by adding a standard (PEP 508) environment marker after a `;`
-This works for modules listed directly in plugin.json and for lines in requirements files e.g.
-
+numpy >= 1.24, < 3      # 2.x tested
 ```
+
+Why a requirements file is better:
+
+- **Standard format.** It is the same file format pip uses, so the same file can be tested by hand with `pip install -r requirements.txt`.
+- **Easier to read and maintain.** One package per line, with room for comments explaining why each package and version is needed. JSON does not allow comments.
+- **Shorter plugin.json.** The manifest stays focused on the plugin itself.
+- **Can be split.** Several files can be listed, e.g. `["requirements.txt", "camera.txt"]`, and packages can be listed directly in plugin.json alongside them if needed.
+
+Rules for requirements files:
+
+- An entry in `sbcPythonDependencies` that ends in `.txt` is treated as a requirements file.
+- The file is looked for in `<plugin path>/dsf/`. A subfolder can be given e.g. `extras/camera.txt`.
+- If the file is not found, pipInstall2 stops with exit code 13.
+- Requirements files cannot include other requirements files. Only `.txt` entries in plugin.json are expanded.
+
+## Package descriptions that are handled
+
+The same descriptions work in a requirements file and directly in `sbcPythonDependencies`.
+
+### Package names
+
+| Example | Meaning |
+| --- | --- |
+| `requests` | Plain package name |
+| `PyGithub` | Names are not case sensitive |
+| `keyrings.alt`, `dsf-python`, `dsf_python` | Names may contain `.`, `-` and `_` |
+| `uvicorn[standard]`, `pkg[extra1,extra2]` | Extras (optional features of a package) in square brackets |
+| `git+https://github.com/pallets/flask.git` | Install directly from a git repository |
+| `git+https://github.com/x/y.git#egg=y` | git URL with a fragment (the `#` is not a comment because there is no space before it) |
+
+### Version conditions
+
+Any standard (PEP 440) comparison can follow the name. Spaces around comparisons are allowed.
+
+| Example | Meaning |
+| --- | --- |
+| `numpy==1.26.4` | Exactly this version |
+| `numpy==1.*` | Any 1.x version |
+| `numpy!=1.25.0` | Any version except this one |
+| `numpy>=1.24`, `numpy>1.24` | At least / greater than |
+| `numpy<=2.0`, `numpy<2` | At most / less than |
+| `numpy~=1.26.0` | Compatible release: `>=1.26.0, <1.27` |
+| `pkg===1.0-custom` | Exact string match (rarely needed) |
+| `numpy>=1.24,<3` | A range: several conditions separated by commas |
+| `pkg[extra] >= 1, != 1.3` | Extras, spaces and several conditions together |
+| `pkg>=1.0rc1` | Pre-release versions |
+
+### Platform conditions (environment markers)
+
+A standard (PEP 508) environment marker after a `;` makes a package platform dependent:
+
+```text
 picamera2; sys_platform == "linux"
 pygrabber==0.2; sys_platform == "win32"
+numpy>=2; python_version >= "3.11"
+some-arm-package; platform_machine == "aarch64"
 ```
 
-The marker is evaluated on the machine pipInstall is running on.
-If it matches, the module is processed as normal (using the part before the `;`).
-If it does not match, the module is skipped.
-If the marker cannot be evaluated a warning is logged and the module is installed anyway.
-Any standard marker can be used e.g. `platform_machine == "aarch64"` or `python_version >= "3.11"`
+- The marker is checked on the SBC that pipInstall2 is running on.
+- If it matches, the package is handled as normal.
+- If it does not match, the package is skipped (and logged).
+- If the marker cannot be understood, a warning is logged and the package is installed anyway.
 
-Comments:
+### Comments
 
-Anything from a `#` that is at the start of an entry, or preceded by whitespace, to the end of the entry is ignored.
-This works for modules listed directly in plugin.json and for lines in requirements files e.g.
+Anything from a `#` that starts an entry, or that has a space or tab before it, to the end of the line is ignored:
 
-```
+```text
+# this whole line is ignored
 numpy==1.26  # needed for X
 picamera2; sys_platform == "linux"  # camera support
-# this whole entry is ignored
 ```
 
-A `#` with no whitespace before it is kept e.g. `git+https://github.com/x/y.git#egg=y`
+Comments also work in `sbcPythonDependencies`, e.g. `"requirements.txt  # main packages"`. An entry that is only a comment is ignored.
 
-logging is sent to journalctl as well as a log file `<plugin Path>`/venv/pipInstall2.log
+### Special entries
 
-A special, dummy module "--verbose" can be included in plugin.json --> as the VERY FIRST module.  This enables verbose logging (see example in file verbose_test.json)
+| Entry | Meaning |
+| --- | --- |
+| `--verbose` | Must be the **very first** entry in `sbcPythonDependencies`. Turns on detailed logging, including pip's own output. |
+| `--user name` | `--user` is ignored with a warning. The package is installed in the plugin's venv like any other. |
+| `sys`, `os`, `json`, `shlex` ... | Modules that are part of Python itself are recognised and ignored. They do not need to be listed. |
 
-Return Codes:
+### Not supported
 
-0 - All modules successfully installed or sensibly handled.
+These pip requirements-file features are not supported. An entry using any of them stops pipInstall2 with exit code 11 (invalid entry):
 
-Other than 0 --> Something nasty happened or one or more modules failed to install.
-Usually this will be because pip could not handle the install request.
+- Options such as `-r other.txt`, `-c constraints.txt`, `-e .`, `--index-url`, `--extra-index-url`, `--pre`
+- Per-package options such as `--hash=sha256:...`
+- Direct URL references such as `name @ https://.../file.whl` (use `git+` for git repositories)
+- Lines continued with `\`
+
+## What pipInstall2 does
+
+### 1. Create the virtual environment
+
+The venv is created at `<plugin path>/venv`:
+
+- It is recreated from scratch every time pipInstall2 runs.
+- pip in the venv is upgraded to the latest version.
+- The venv can see the system's Python packages (e.g. packages installed with `apt`). Packages installed in the venv take priority over system packages with the same name.
+
+### 2. Read the package list
+
+- `sbcPythonDependencies` is read from `plugin.json`.
+- Comments are removed, and `--verbose` is acted on.
+- Requirements files are read and their lines are added to the list.
+- Packages whose platform condition does not match are dropped.
+
+pipInstall2 needs the Python `packaging` module to read package descriptions. If the system Python does not have it, it is installed into the venv and used from there.
+
+### 3. Decide what needs installing
+
+Each package is checked against what is already available:
+
+| Situation | Action |
+| --- | --- |
+| Part of Python itself (`sys`, `os` ...) | Ignored |
+| Already installed, no version condition | Skipped (not upgraded) |
+| Already installed at a version that meets the condition | Skipped |
+| Installed at a version that does not meet the condition, or the version cannot be determined | Installed |
+| Not installed | Installed - the latest version, or the latest version that meets the condition |
+
+### 4. Install
+
+1. **Dry run.** pip is asked what it would install for all the remaining packages together (`pip install --dry-run`). The log lists each package and version that will be installed, marked as `requested` or `dependency`.
+2. **Install everything together.** A single `pip install -r` installs all the packages at once, so pip chooses versions that work together.
+3. **Fall back to one at a time.** If the dry run or the combined install fails (e.g. one package does not exist), each package is installed separately. The packages that can be installed still are, and each failure is logged with pip's error message.
+
+### 5. Report
+
+A summary lists the packages that were ignored, skipped, installed (with old and new versions) and failed. pipInstall2 then exits with one of the codes below.
+
+## Logging and files
+
+Log output goes to the console (and so to `journalctl` when run by DSF) and to `<plugin path>/venv/pipInstall2.log`. If the log file cannot be created there, it is created in the current folder instead.
+
+pipInstall2 also leaves these files in `<plugin path>/venv`:
+
+| File | Purpose |
+| --- | --- |
+| `pipInstall2.log` | Log of the last run |
+| `pipInstall_requirements.txt` | The combined list of packages that was passed to pip |
+| `pipInstall_report.json` | pip's dry-run report: everything pip planned to install, including dependencies |
+| `plugin_path_change.py`, `plugin_path_change.pth` | Puts the venv's packages ahead of system packages whenever the venv's Python starts |
+| `import_test.py` | Helper used to check whether a module is already installed |
+
+## Usage
+
+```bash
+pipInstall2.py -m <manifest file> -p <plugin path>
+```
+
+Both paths should be fully qualified. DSF supplies these when it installs a plugin.
+
+## Exit codes
 
 | Code | Meaning |
-|---|---|
-| 0 | Success |
-| 1 | No manifest file (-m) was provided |
+| --- | --- |
+| 0 | All packages installed or sensibly handled |
+| 1 | No manifest file (`-m`) was provided |
 | 2 | Manifest file does not exist |
-| 3 | No plugin path (-p) was provided |
+| 3 | No plugin path (`-p`) was provided |
 | 4 | Plugin path does not exist |
 | 6 | Problem creating the virtual environment |
 | 7 | Manifest is not a properly formatted json file |
-| 8 | pip freeze failed |
+| 8 | `pip freeze` failed |
 | 9 | Unexpected error |
-| 10 | One or more modules failed to install |
-| 11 | Invalid module entry (could not be parsed) |
+| 10 | One or more packages failed to install |
+| 11 | Invalid package entry (could not be understood) |
 | 12 | Could not get site-packages information from the venv |
-| 13 | Requirements file not found in `<plugin Path>/dsf` |
-| 14 | The python `packaging` module is not available and could not be installed into the venv |
+| 13 | Requirements file not found in `<plugin path>/dsf` |
+| 14 | The Python `packaging` module is not available and could not be installed into the venv |
 
-##  Note: python scripts in Duet3d plugins DO NOT need to have a shebang
-Provided the calling program does so with a fully qualified path. If the plugin is itself a python script - this is done by the plugin manager. 
+## Installing pipInstall2 in DSF
 
-## Tested in the following DSF environment
-DSF 3.6.x
+Tested with DSF 3.6.x.
 
-Installed as:
-
-/opt/dsf/bin/pipInstall2.py
-
-with
-
+```bash
+sudo cp pipInstall2.py /opt/dsf/bin/pipInstall2.py
 sudo chmod 744 /opt/dsf/bin/pipInstall2.py
-
 sudo chown dsf:dsf /opt/dsf/bin/pipInstall2.py
+```
 
-The following entry is expected in `/opt/dfs/conf/plugins.json`
+The following entry is expected in `/opt/dsf/conf/plugins.json`:
 
-  ```
-  "InstallPythonPackageCommand": "/opt/dsf/bin/pipInstall2.py",
-  ```
+```text
+"InstallPythonPackageCommand": "/opt/dsf/bin/pipInstall2.py",
+```
+
+Python scripts in DSF plugins do not need a shebang line, provided the calling program runs them with a fully qualified path. If the plugin is itself a Python script, the plugin manager does this.
