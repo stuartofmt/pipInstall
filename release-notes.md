@@ -19,6 +19,7 @@ Newest first. See [readme.md](readme.md) for a description of what pipInstall2 d
 - Removed `--force-reinstall` (dependencies were reinstalled and re-downloaded every time)
 - pip runs with `--no-cache-dir` (and `PIP_NO_CACHE_DIR=1` while creating the venv) and the pip cache is purged after installing, to save SD card space. The cache is per user (e.g. `~/.cache/pip`) - under DSF it is already disabled because the `dsf` user's home (`/`) is not writable
 - Already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
+- A package prefixed with `!` (e.g. `!simplejpeg`) is always installed in the venv, even if a system copy already meets the request. These are installed first with `--ignore-installed --no-deps`; their dependencies are installed with everything else. For overriding system (apt) packages, e.g. picamera2 built against numpy 1.x on Bookworm
 - The `.pth` / `.py` sys.path hook is no longer written to the venv (code commented out). Normal venv ordering already puts venv packages ahead of system packages; the hook also put them ahead of the standard library, which let PyPI backports (e.g. argparse) shadow stdlib modules
 - Trailing comments are ignored e.g. `numpy==1.26  # needed for X`
 - A `#` is treated as a comment when at the start or preceded by whitespace (same rule as pip)

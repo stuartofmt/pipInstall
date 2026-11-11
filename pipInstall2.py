@@ -33,8 +33,12 @@ Rules:
 4) Installed modules will be placed in site-packages of the virtual environment
 5) venv site-packages is ahead of the system site-packages in sys.path (standard venv behaviour)
 therefore installed modules take precedence over system modules (but not over the standard library)
+6) A module prefixed with ! (e.g. !simplejpeg) is always installed in the venv, even if a system copy
+	already meets the request (rules 2 and 3c do not apply). Use it to stop a system (e.g. apt) copy being used.
 
 Install steps:
+0) modules marked ! are installed first with --ignore-installed --no-deps (dry run, then a single install,
+	falling back to one at a time). Their dependencies are installed in step b)
 a) pip install --dry-run (with --report) of all modules that need installing - logs what will actually be installed
 	including dependencies. The report is kept at <plugin Path>/venv/pipInstall_report.json
 b) a single pip install -r of all of them, so pip resolves them together (consistent versions)
@@ -78,6 +82,10 @@ PATHFILENAME = 'plugin_path_change'
 IMPORTTESTFILE = 'import_test.py'
 REQFILENAME = 'pipInstall_requirements.txt'  # combined requirements written to the venv folder
 REPORTFILENAME = 'pipInstall_report.json'  # pip --dry-run report written to the venv folder
+VENVONLY_MARK = '!'  # prefix: always install the venv's own copy, ignoring any system copy
+VENVONLY_FLAGS = '--ignore-installed --no-deps'  # pip flags for the ! modules (dependencies installed afterwards)
+VENVONLY_REQFILENAME = 'pipInstall_venv_only_requirements.txt'
+VENVONLY_REPORTFILENAME = 'pipInstall_venv_only_report.json'
 pipQuiet = '-qq' #Reduce pip output
 PIPNOCACHE = '--no-cache-dir' # Don't write downloads/builds to the pip cache (saves SD card space and writes)
 COMMENT_RE = re.compile(r'(^|\s)#.*$') # '#' at start or preceded by whitespace (pip rule)
@@ -118,11 +126,13 @@ class Dependency:
 	# conditions (including ranges e.g. >=1.2,<2.0) follow the same rules as pip
 	# git+ urls are handled separately
 	# A leading --user (e.g. --user dsf-python) is ignored - modules are always installed in the venv
+	# A leading ! (e.g. !simplejpeg) marks a module that must be installed in the venv even if a system copy satisfies it
 
 	def __init__(self) -> None:
 		self.package: str = None
 		self.version: str = None
 		self.comparator: str = None
+		self.venvOnly: bool = False
 
 	@classmethod
 	def parse(cls, text: str) -> Optional['Dependency']:
@@ -134,6 +144,10 @@ class Dependency:
 
 		text = text.strip()
 		dep = Dependency()
+
+		if text.startswith(VENVONLY_MARK):
+			dep.venvOnly = True
+			text = text[len(VENVONLY_MARK):].strip()
 
 		if text.startswith('git+'):
 			# Git dependency
@@ -330,7 +344,7 @@ def parseVersion(request) -> Dependency:
 		dep.comparator = 'None'
 		dep.version = ''
 
-	return dep.package, dep.comparator ,dep.version
+	return dep.package, dep.comparator ,dep.version, dep.venvOnly
 
 
 def runsubprocess(cmd):
@@ -577,12 +591,12 @@ def pipErrors(stderr):
 def requestString(mod, comp, val):
 	return mod if comp == 'None' else f'{mod}{comp}{val}'
 
-def installModule(mod, comp, val, pythonFile):
+def installModule(mod, comp, val, pythonFile, flags=''):
 	request = requestString(mod, comp, val)
 
 	logger.info(f'\nAttempting install of: {request}\n')
 
-	cmd = f'{pythonFile} -m {PIP} install "{request}" {PIPNOCACHE} {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install {flags} "{request}" {PIPNOCACHE} {pipQuiet}'
 	ok, out, err = runPip(cmd)
 
 	if not ok:  # module could not be installed
@@ -591,19 +605,19 @@ def installModule(mod, comp, val, pythonFile):
 	logger.debug(f'Result was ==> \n{out}')
 	return True
 
-def dryRun(requests, pythonFile, venvPath):
+def dryRun(requests, pythonFile, venvPath, flags='', reqName=REQFILENAME, reportName=REPORTFILENAME):
 	"""
 	Write the requests to a requirements file and ask pip what it would install
 	Logs the planned installs (requested modules and their dependencies)
 	Returns (ok, reqfile)
 	"""
-	reqfile = os.path.normpath(os.path.join(venvPath, REQFILENAME))
-	reportfile = os.path.normpath(os.path.join(venvPath, REPORTFILENAME))
+	reqfile = os.path.normpath(os.path.join(venvPath, reqName))
+	reportfile = os.path.normpath(os.path.join(venvPath, reportName))
 	with open(reqfile, 'w') as f:
 		f.write('\n'.join(requests) + '\n')
 	logger.debug(f'Requirements written to {reqfile}:\n' + '\n'.join(requests))
 
-	cmd = f'{pythonFile} -m {PIP} install --dry-run --report "{reportfile}" -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install {flags} --dry-run --report "{reportfile}" -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
 	ok, out, err = runPip(cmd)
 	if not ok:
 		logger.info(f'Dry run failed - pip could not resolve the requested modules together:\n{pipErrors(err)}')
@@ -627,9 +641,9 @@ def dryRun(requests, pythonFile, venvPath):
 	logger.debug(f'Full dry run report: {reportfile}')
 	return True, reqfile
 
-def installRequirements(reqfile, pythonFile):
+def installRequirements(reqfile, pythonFile, flags=''):
 	# Install everything with a single pip call so pip resolves all modules together
-	cmd = f'{pythonFile} -m {PIP} install -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install {flags} -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
 	ok, out, err = runPip(cmd)
 	if not ok:
 		logger.info(f'Combined install failed:\n{pipErrors(err)}')
@@ -642,9 +656,10 @@ def parseRequests(mList, pythonFile, sitePath,freezeList):
 	install_result, install_version = '', ''
 	for module in mList:
 		logger.debug(f'\nParsing request for module: {module}')
-		mod_name, requested_version_comp, requested_version_val = parseVersion(module)
+		mod_name, requested_version_comp, requested_version_val, venv_only = parseVersion(module)
 		current_version, current_type = getModuleVersion(mod_name, pythonFile, sitePath, freezeList)
-		modulerequests.append([mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version])
+		# [7] venv_only is kept outside unpackRequestList - read it as request[7]
+		modulerequests.append([mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version, venv_only])
 	return modulerequests
 
 def versionSatisfies(current_version, current_type, condition):
@@ -672,6 +687,8 @@ def selectRequests(modulerequests):
 
 		if current_type == modType.BUILTIN.value:
 			install_result = 'Builtin'
+		elif request[7]:  # marked ! - always install the venv's own copy
+			toInstall.append(idx)
 		elif current_type in installedTypes and requested_version_comp == 'None':
 			install_result = 'Skipped'
 		elif requested_version_comp != 'None' and versionSatisfies(current_version, current_type, requested_version_comp):
@@ -679,43 +696,62 @@ def selectRequests(modulerequests):
 		else:
 			toInstall.append(idx)
 
-		modulerequests[idx]= [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
+		modulerequests[idx][0:7] = [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
 	return toInstall
 
 def setResult(modulerequests, idx, install_result):
 	modulerequests[idx][5] = install_result
 
+def installGroup(modulerequests, indices, pythonFile, venvPath, flags='', reqName=REQFILENAME, reportName=REPORTFILENAME):
+	"""
+	Dry run then a single pip install -r of the modules at indices (with extra pip flags)
+	If either fails, install them one at a time so the others still get installed
+	Returns the set of indices that failed
+	"""
+	requests = [requestString(*modulerequests[i][0:3]) for i in indices]
+	logger.info('Checking what pip will install (dry run):')
+	ok, reqfile = dryRun(requests, pythonFile, venvPath, flags, reqName, reportName)
+	if ok:
+		logger.info('\nInstalling them together (single pip install -r):')
+		ok = installRequirements(reqfile, pythonFile, flags)
+	if ok:
+		return set()
+
+	logger.info('\nFalling back to installing modules one at a time')
+	failed = set()
+	for i in sorted(indices):
+		mod_name, comp, val = modulerequests[i][0:3]
+		if not installModule(mod_name, comp, val, pythonFile, flags):
+			failed.add(i)
+	return failed
+
 def processRequests(modulerequests, pythonFile, venvPath):
 	"""
 	1) Apply the rules to decide what needs installing
-	2) pip --dry-run of everything together - logs what will actually be installed
-	3) single pip install -r of everything together
-	4) if 2) or 3) fails, install one module at a time so the others still get installed
+	2) Modules marked ! - install the venv's own copy (--ignore-installed --no-deps)
+	3) pip --dry-run of everything together - logs what will actually be installed
+	   (includes the ! modules - now satisfied in the venv - so their dependencies are installed)
+	4) single pip install -r of everything together
+	5) if a dry run or install fails, install one module at a time so the others still get installed
 	"""
 	together = selectRequests(modulerequests)
-	oneAtATime = []
+
+	venvOnly = [i for i in together if modulerequests[i][7]]
+	if venvOnly:
+		logger.info(f'\n\nModules marked "{VENVONLY_MARK}" - installing the venv\'s own copy '
+				'(any system copy is ignored, dependencies are installed in the next step):')
+		failed = installGroup(modulerequests, venvOnly, pythonFile, venvPath,
+						VENVONLY_FLAGS, VENVONLY_REQFILENAME, VENVONLY_REPORTFILENAME)
+		for i in failed:
+			setResult(modulerequests, i, 'Failed')
+		# A failed ! module is left out of the next step - a system copy would otherwise satisfy it silently
+		together = [i for i in together if i not in failed]
 
 	if together:
-		requests = [requestString(*modulerequests[i][0:3]) for i in together]
-		logger.info('\n\nChecking what pip will install (dry run):')
-		ok, reqfile = dryRun(requests, pythonFile, venvPath)
-		if ok:
-			logger.info('\nInstalling all modules together (single pip install -r):')
-			ok = installRequirements(reqfile, pythonFile)
-		if ok:
-			for i in together:
-				setResult(modulerequests, i, 'Succeeded')
-		else:
-			logger.info('\nFalling back to installing modules one at a time')
-			oneAtATime = together
-
-	for i in sorted(oneAtATime):
-		mod_name, comp, val, current_version = modulerequests[i][0:4]
-		install_ok = installModule(mod_name, comp, val, pythonFile)
-		if install_ok:
-			setResult(modulerequests, i, 'Succeeded')
-		else:
-			setResult(modulerequests, i, 'Failed')
+		logger.info('\n\nInstalling modules (and dependencies):')
+		failed = installGroup(modulerequests, together, pythonFile, venvPath)
+		for i in together:
+			setResult(modulerequests, i, 'Failed' if i in failed else 'Succeeded')
 
 	return modulerequests
 
@@ -741,7 +777,7 @@ def getUpdatedVersions(modulerequests,pythonFile, sitePath, freezeList):
 		else:
 			install_version = 'None'
 
-		modulerequests[idx]= [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
+		modulerequests[idx][0:7] = [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
 
 	return modulerequests
 
@@ -808,7 +844,8 @@ def reportResults(builtinList, skippedList, installedList, failedList):
 				current_version = ''
 			if install_version == 'None':	
 				install_version = 'no Version'
-			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}, now {install_version}')	
+			mark = VENVONLY_MARK if req[7] else ''
+			logger.info(f'\t{mark}{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}, now {install_version}')	
 
 	if (len(failedList) > 0):
 		logger.info('\nThese modules failed to install / update:')
@@ -820,7 +857,8 @@ def reportResults(builtinList, skippedList, installedList, failedList):
 				requested_version_comp = ''
 			if current_version == 'None':
 				current_version = ''
-			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}')
+			mark = VENVONLY_MARK if req[7] else ''
+			logger.info(f'\t{mark}{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}')
 
 def shutDown(code):
 	# logger does not exist yet if called while validating arguments

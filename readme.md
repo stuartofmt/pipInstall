@@ -110,6 +110,7 @@ Comments also work in `sbcPythonDependencies`, e.g. `"requirements.txt  # main p
 | --- | --- |
 | `--verbose` | Must be the **very first** entry in `sbcPythonDependencies`. Turns on detailed logging, including pip's own output. |
 | `--user name` | `--user` is ignored with a warning. The package is installed in the plugin's venv like any other. |
+| `!name` | Always install the plugin's own copy in the venv, even if a system copy (e.g. from `apt`) already meets the request. See [Overriding a system package](#overriding-a-system-package). |
 | `sys`, `os`, `json`, `shlex` ... | Modules that are part of Python itself are recognised and ignored. They do not need to be listed. |
 
 ### Not supported
@@ -151,9 +152,11 @@ Each package is checked against what is already available:
 | Already installed at a version that meets the condition | Skipped |
 | Installed at a version that does not meet the condition, or the version cannot be determined | Installed |
 | Not installed | Installed - the latest version, or the latest version that meets the condition |
+| Marked with `!` | Installed in the venv, whatever is already installed |
 
 ### 4. Install
 
+0. **Packages marked `!` first.** They are installed with `pip install --ignore-installed --no-deps` (dry run, then all together, falling back to one at a time). Only the marked packages are installed in this step. Their dependencies are installed in the next steps, together with everything else. A marked package that fails here is reported as failed and left out of the next steps, so a system copy is not used in its place.
 1. **Dry run.** pip is asked what it would install for all the remaining packages together (`pip install --dry-run`). The log lists each package and version that will be installed, marked as `requested` or `dependency`.
 2. **Install everything together.** A single `pip install -r` installs all the packages at once, so pip chooses versions that work together.
 3. **Fall back to one at a time.** If the dry run or the combined install fails (e.g. one package does not exist), each package is installed separately. The packages that can be installed still are, and each failure is logged with pip's error message.
@@ -161,6 +164,25 @@ Each package is checked against what is already available:
 ### 5. Report
 
 A summary lists the packages that were ignored, skipped, installed (with old and new versions) and failed. pipInstall2 then exits with one of the codes below.
+
+### Overriding a system package
+
+Because the venv can see the system's packages, a package that is already installed on the system (e.g. with `apt`) is normally used as it is. Mark a package with `!` when the plugin must have its own copy instead.
+
+Example: on Raspberry Pi OS Bookworm, `apt` installs `python3-picamera2` with numpy 1.x, and its compiled helpers (`simplejpeg`, `pidng`, `av`) are built against numpy 1.x. A plugin that also needs numpy 2 (e.g. through `opencv-python`) gets numpy 2 in its venv, but `import picamera2` then fails with `numpy.dtype size changed, may indicate binary incompatibility`. Marking the camera packages installs venv copies built for numpy 2:
+
+```text
+opencv-python
+!picamera2==0.3.31   # pin to the version apt has - it still uses apt's libcamera
+!simplejpeg
+!pidng
+!av
+```
+
+- List **every** package that has to come from the venv. Marking only `picamera2` leaves apt's `simplejpeg` in use. pipInstall2 cannot tell which system packages were built against numpy 1.
+- The system copies are not changed, so the system Python and other plugins are not affected.
+- Packages that must be compiled need their build tools on the system. pip's `picamera2` needs `python-prctl`, which needs `libcap-dev`. Add such packages to `sbcPackageDependencies`.
+- `!` is a pipInstall2 feature. A requirements file using it cannot be passed to `pip install -r` directly.
 
 ## Logging and files
 
@@ -173,6 +195,7 @@ pipInstall2 also leaves these files in `<plugin path>/venv`:
 | `pipInstall2.log` | Log of the last run |
 | `pipInstall_requirements.txt` | The combined list of packages that was passed to pip |
 | `pipInstall_report.json` | pip's dry-run report: everything pip planned to install, including dependencies |
+| `pipInstall_venv_only_requirements.txt`, `pipInstall_venv_only_report.json` | The same, for packages marked `!` (only present if any were marked) |
 | `import_test.py` | Helper used to check whether a module is already installed |
 
 ## Usage
