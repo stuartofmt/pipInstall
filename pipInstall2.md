@@ -173,7 +173,6 @@ pipInstall2 also leaves these files in `<plugin path>/venv`:
 | `pipInstall2.log` | Log of the last run |
 | `pipInstall_requirements.txt` | The combined list of packages that was passed to pip |
 | `pipInstall_report.json` | pip's dry-run report: everything pip planned to install, including dependencies |
-| `plugin_path_change.py`, `plugin_path_change.pth` | Puts the venv's packages ahead of system packages whenever the venv's Python starts |
 | `import_test.py` | Helper used to check whether a module is already installed |
 
 ## Usage

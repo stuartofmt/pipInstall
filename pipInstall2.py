@@ -31,8 +31,8 @@ Rules:
 	If the installed version does not meet the condition (or cannot be determined) it will be installed
 
 4) Installed modules will be placed in site-packages of the virtual environment
-5) site-packages will be placed at the front of sys.path when the venv python interpreter is used
-therefore installed modules will take precedence over system modules
+5) venv site-packages is ahead of the system site-packages in sys.path (standard venv behaviour)
+therefore installed modules take precedence over system modules (but not over the standard library)
 
 Install steps:
 a) pip install --dry-run (with --report) of all modules that need installing - logs what will actually be installed
@@ -79,6 +79,7 @@ IMPORTTESTFILE = 'import_test.py'
 REQFILENAME = 'pipInstall_requirements.txt'  # combined requirements written to the venv folder
 REPORTFILENAME = 'pipInstall_report.json'  # pip --dry-run report written to the venv folder
 pipQuiet = '-qq' #Reduce pip output
+PIPNOCACHE = '--no-cache-dir' # Don't write downloads/builds to the pip cache (saves SD card space and writes)
 COMMENT_RE = re.compile(r'(^|\s)#.*$') # '#' at start or preceded by whitespace (pip rule)
 
 if os.name == 'nt':  # Windows
@@ -165,10 +166,8 @@ class Dependency:
 
 def createVenvFiles(pythonFile, envPath):
 	"""
-	Creates a .pth file that executes a small python script
-	whenever the venv python interpreter is used.
-	The script changes the sys.path order so
-	the site-packages path is at the front of sys.path
+	Finds and returns the venv site-packages path.
+	(The .pth hook that moved site-packages to the front of sys.path is currently disabled - see below)
 	"""
 
 	cmd = f'{pythonFile} -m site'
@@ -187,25 +186,30 @@ def createVenvFiles(pythonFile, envPath):
 			logger.debug(f'Found site-packages at: {sitePackagesPath}')
 			break
 
-	# Create the path change file to ensure site-packages is at the front of sys.path
-	pyfile = (
-			f'''import sys\n'''
-			f'''sys.path.remove('{sitePackagesPath}')\n'''
-			f'''sys.path.insert(0, '{sitePackagesPath}')\n'''
-			)
-
-	#.pth file just imports the above file
-	pthfile=f'''import {PATHFILENAME}\n'''
-
-	file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.py'))
-	logger.debug(f'Creating path change file at: {file}')
-	with open(file, 'w+') as f:
-		f.write(pyfile)
-
-	file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.pth'))
-	logger.debug(f'Creating pth file at: {file}')
-	with open(file, 'w+') as f:
-		f.write(pthfile)
+	# .pth hook DISABLED (may be restored later).
+	# A venv's site-packages is already ahead of the system site-packages in sys.path,
+	# so the hook's only effect was to move it ahead of the standard library too -
+	# which lets venv packages (e.g. old PyPI backports like argparse / enum34) shadow stdlib modules.
+	#
+	# # Create the path change file to ensure site-packages is at the front of sys.path
+	# pyfile = (
+	# 		f'''import sys\n'''
+	# 		f'''sys.path.remove('{sitePackagesPath}')\n'''
+	# 		f'''sys.path.insert(0, '{sitePackagesPath}')\n'''
+	# 		)
+	#
+	# #.pth file just imports the above file
+	# pthfile=f'''import {PATHFILENAME}\n'''
+	#
+	# file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.py'))
+	# logger.debug(f'Creating path change file at: {file}')
+	# with open(file, 'w+') as f:
+	# 	f.write(pyfile)
+	#
+	# file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.pth'))
+	# logger.debug(f'Creating pth file at: {file}')
+	# with open(file, 'w+') as f:
+	# 	f.write(pthfile)
 
 	return sitePackagesPath
 
@@ -354,7 +358,8 @@ def createPythonEnv(envPath):
 		return
 	"""
 	# Create a new virtual environment with updated pip
-	cmd = f'{PYTHON_VERSION} -m venv {envPath} --clear --system-site-packages --upgrade-deps'
+	# PIP_NO_CACHE_DIR stops the pip run by --upgrade-deps from using the pip cache
+	cmd = f'PIP_NO_CACHE_DIR=1 {PYTHON_VERSION} -m venv {envPath} --clear --system-site-packages --upgrade-deps'
 	logger.info(f'Creating Python Virtual Environment at:\n{envPath}')
 	result = runsubprocess(cmd)
 	if result != '':
@@ -381,7 +386,7 @@ def checkPackaging(pythonFile, sitePath):
 		return
 	logger.info(f'The python "packaging" module is not available ({err}) - installing it into the venv')
 	# --ignore-installed so a copy is put in the venv even if the venv can see another one
-	cmd = f'{pythonFile} -m {PIP} install --ignore-installed packaging {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install --ignore-installed packaging {PIPNOCACHE} {pipQuiet}'
 	installed, out, perr = runPip(cmd)
 	if installed:
 		if sitePath not in sys.path:
@@ -537,6 +542,24 @@ def getModuleVersion(m, pythonFile, sitePath, freezeList):
 	return 'None', modType.NOTINSTALLED.value
 
 
+def purgePipCache(pythonFile):
+	"""
+	Remove everything from the pip cache of the user running this program
+	(pip cache dir is per user e.g. ~/.cache/pip - not part of the venv).
+	Not fatal: under DSF (user dsf, home /) the cache is not writable so pip has it disabled
+	"""
+	cmd = f'{pythonFile} -m {PIP} cache purge'
+	logger.debug(f'Running ==> {cmd}')
+	try:
+		result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+	except OSError as e:
+		logger.info(f'pip cache purge not run: {e}')
+		return
+	if result.returncode == 0:
+		logger.info(f'pip cache purged: {result.stdout.strip()}')
+	else:
+		logger.info(f'pip cache not purged (cache may be disabled): {(result.stderr or result.stdout).strip()}')
+
 def runPip(cmd):
 	# Run a pip command without raising - returns (ok, stdout, stderr)
 	logger.debug(f'Running ==> {cmd}')
@@ -559,7 +582,7 @@ def installModule(mod, comp, val, pythonFile):
 
 	logger.info(f'\nAttempting install of: {request}\n')
 
-	cmd = f'{pythonFile} -m {PIP} install "{request}" {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install "{request}" {PIPNOCACHE} {pipQuiet}'
 	ok, out, err = runPip(cmd)
 
 	if not ok:  # module could not be installed
@@ -580,7 +603,7 @@ def dryRun(requests, pythonFile, venvPath):
 		f.write('\n'.join(requests) + '\n')
 	logger.debug(f'Requirements written to {reqfile}:\n' + '\n'.join(requests))
 
-	cmd = f'{pythonFile} -m {PIP} install --dry-run --report "{reportfile}" -r "{reqfile}" {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install --dry-run --report "{reportfile}" -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
 	ok, out, err = runPip(cmd)
 	if not ok:
 		logger.info(f'Dry run failed - pip could not resolve the requested modules together:\n{pipErrors(err)}')
@@ -606,7 +629,7 @@ def dryRun(requests, pythonFile, venvPath):
 
 def installRequirements(reqfile, pythonFile):
 	# Install everything with a single pip call so pip resolves all modules together
-	cmd = f'{pythonFile} -m {PIP} install -r "{reqfile}" {pipQuiet}'
+	cmd = f'{pythonFile} -m {PIP} install -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
 	ok, out, err = runPip(cmd)
 	if not ok:
 		logger.info(f'Combined install failed:\n{pipErrors(err)}')
@@ -840,7 +863,7 @@ def main(progName):
 		logger.setLevel(logging.DEBUG)
 		pipQuiet = ''
 
-	# Ensure site-packages are at the front of sys.path in venv
+	# Find the venv site-packages path (.pth hook currently disabled)
 	sitePath = createVenvFiles(pythonFile, venvPath)
 
 	# python script to test if module is installed and get its version
@@ -864,6 +887,9 @@ def main(progName):
 
 	# Process the requests and install modules as required
 	moduleRequests = processRequests(moduleRequests, pythonFile, venvPath)
+
+	# Housekeeping - keep the pip cache from using SD card space
+	purgePipCache(pythonFile)
 
 	logger.info('\n\nChecking installed versions after install:')	
 	freezeList = getFreezeList(pythonFile)  # Get updated freeze list after parsing requests

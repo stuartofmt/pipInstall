@@ -16,8 +16,10 @@ Newest first. See [pipInstall2.md](pipInstall2.md) for a description of what pip
 - `pip install --dry-run` (with `--report`) logs what will actually be installed, including dependencies
 - Modules are installed together with a single `pip install -r` so pip resolves them consistently
 - If that fails, falls back to installing one module at a time and reports each failure with pip's error
-- Removed `--force-reinstall` and `--no-cache-dir` (dependencies were reinstalled and re-downloaded every time)
+- Removed `--force-reinstall` (dependencies were reinstalled and re-downloaded every time)
+- pip runs with `--no-cache-dir` (and `PIP_NO_CACHE_DIR=1` while creating the venv) and the pip cache is purged after installing, to save SD card space. The cache is per user (e.g. `~/.cache/pip`) - under DSF it is already disabled because the `dsf` user's home (`/`) is not writable
 - Already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
+- The `.pth` / `.py` sys.path hook is no longer written to the venv (code commented out). Normal venv ordering already puts venv packages ahead of system packages; the hook also put them ahead of the standard library, which let PyPI backports (e.g. argparse) shadow stdlib modules
 - Trailing comments are ignored e.g. `numpy==1.26  # needed for X`
 - A `#` is treated as a comment when at the start or preceded by whitespace (same rule as pip)
 - Applies to entries in plugin.json (including `--verbose`) and in requirements files
