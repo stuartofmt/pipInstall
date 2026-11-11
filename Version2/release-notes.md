@@ -2,7 +2,8 @@
 
 Newest first. See [pipInstall2.md](pipInstall2.md) for a description of what pipInstall2 does and how to use it.
 
-## Version 2.3.3 - Stuart Strolin
+## Version 2.4.0-alpha.1 - Stuart Strolin
+
 - Argument errors now exit with their exit codes (previously crashed with IndexError / NameError)
 - The venv python no longer prints the site-packages path every time it starts
 - A requirements file (`.txt`) that is not found in `<plugin path>/dsf` now exits with code 13 (previously it was treated as a module name and looked up on PyPI)
@@ -12,20 +13,17 @@ Newest first. See [pipInstall2.md](pipInstall2.md) for a description of what pip
 - A failed install is no longer reported as succeeded for modules that import without version information
 - Removed unused code (sysconfig import, UNSUPPORTED_CONDITIONAL exit code, Dependency types and uri)
 - Log file lines are no longer wrapped in quotes
-
-## Version 2.3.2 - Stuart Strolin
 - `pip install --dry-run` (with `--report`) logs what will actually be installed, including dependencies
 - Modules are installed together with a single `pip install -r` so pip resolves them consistently
 - If that fails, falls back to installing one module at a time and reports each failure with pip's error
 - Removed `--force-reinstall` and `--no-cache-dir` (dependencies were reinstalled and re-downloaded every time)
 - Already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
-
-## Version 2.3.1 - Stuart Strolin
 - Trailing comments are ignored e.g. `numpy==1.26  # needed for X`
 - A `#` is treated as a comment when at the start or preceded by whitespace (same rule as pip)
 - Applies to entries in plugin.json (including `--verbose`) and in requirements files
 
 ## Version 2.3.0 - Stuart Strolin
+
 - Added support for version ranges and all PEP 440 comparisons e.g. `numpy>=1.2,<2.0`  `numpy!=1.3`  `numpy==1.*`
 - Spaces are allowed around comparisons e.g. `numpy >= 1.2`
 - `~=` is no longer converted to `>=` (pip handles it correctly)
@@ -33,29 +31,36 @@ Newest first. See [pipInstall2.md](pipInstall2.md) for a description of what pip
 - Modules already installed at a version that meets the condition are skipped instead of reinstalled
 
 ## Version 2.1.2 - Stuart Strolin
+
 - Added support for PEP 508 environment markers e.g. `picamera2; sys_platform == "linux"`
 - Modules whose marker does not apply to the current platform are skipped
 - Applies to entries in plugin.json and in requirements files
 
 ## Version 2.1.1 - Stuart Strolin
+
 - Changed logger to initially output to console
 - Then after arguments are parsed add the log file
 
 ## Version 2.1.0 - Stuart Strolin
+
 - Added support for control arguments e.g. `--user` in `--user dsf-python`
 - Changed version determination to give better insight
 
 ## Version 2.0.3 - Stuart Strolin
+
 - Added support for period in name e.g. `keyrings.alt`
 - Added support for space in name and `--user` argument e.g. `--user dsf-python`
 
 ## Version 2.0.2 - Stuart Strolin
+
 - Added support for extras in module names (use of square brackets) e.g. `package[standard]`
 
 ## Version 2.0.1 - Stuart Strolin
+
 - Added defensive code for unexpected error in output from import test script
 
 ## Version 2.0.0 - Stuart Strolin
+
 - Restructured for ease of maintenance
 - Conditionally import version from packaging.version for python 3.13 and above
 - Log file location is `./venv` for the plugin with fallback to cwd (for testing)
@@ -68,6 +73,7 @@ Newest first. See [pipInstall2.md](pipInstall2.md) for a description of what pip
 - Supports modules from git e.g. `git+https://github.com/pallets/flask.git`
 
 ## Version 1.1.2 - Stuart Strolin
+
 - Added flags so venv has upgraded pip and is cleared each time
 - Changed pip list to pip freeze to get version numbers
 - Added `--force-reinstall` to pip install command as a safety measure
@@ -77,9 +83,11 @@ Newest first. See [pipInstall2.md](pipInstall2.md) for a description of what pip
 - Replaced pkg_resources (deprecated) version parsing with packaging.version
 
 ## Version 1.1.1 - Stuart Strolin
+
 - Fixed issue handling modules with no version number e.g. `shlex`
 
 ## Version 1.1.0 - Andy at Duet3D
 
 ## Version 1.0.0 - Stuart Strolin
+
 - Initial release

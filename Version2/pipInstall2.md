@@ -204,7 +204,7 @@ Both paths should be fully qualified. DSF supplies these when it installs a plug
 
 ## Installing pipInstall2 in DSF
 
-Tested with DSF 3.6.x.
+Tested with DSF 3.7.x.
 
 ```bash
 sudo cp pipInstall2.py /opt/dsf/bin/pipInstall2.py
