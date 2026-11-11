@@ -1,6 +1,6 @@
 # pipInstall2 Release Notes
 
-Newest first. See [pipInstall2.md](pipInstall2.md) for a description of what pipInstall2 does and how to use it.
+Newest first. See [readme.md](readme.md) for a description of what pipInstall2 does and how to use it.
 
 ## Version 2.4.0-alpha.1 - Stuart Strolin
 
