@@ -1,5 +1,8 @@
 # Python package installer for DSF
 
+> [!WARNING]
+> **This version (`pipInstall.py`) is no longer maintained.** It receives no fixes or updates. Use [pipInstall2](https://github.com/stuartofmt/pipInstall/tree/pipInstall2) instead.
+
 A python script to install python package dependencies for DSF plugins.
 
 Reports success on built-in modules.
