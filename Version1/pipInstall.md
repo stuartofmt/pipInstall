@@ -8,13 +8,17 @@ Provides logic to (hopefully) avoid version conflicts due to different plugin re
 
 Uses the default pip version for the OS.
 
-Useage:
-Usage pipInstall `<module name>`
+Usage:
+
+```text
+pipInstall <module name>
+```
 
 Expects a single module name with or without a version number.
 
 If version number is supplied it must use one of the following comparisons:
-```
+
+```text
 ==
 >=
 <=
@@ -26,15 +30,16 @@ If version number is supplied it must use one of the following comparisons:
 Version numbers specifying max / min ranges are not supported
 
 Rules (executed in order):
-        1. If the module is a Built-In ==> do nothing
-        2. If the module is not installed ==> try to Install
-        3. If module is installed and no version given ==> do nothing
-           prevents accidental breaking of another plugin
-           can be over-ridden by supplying version info
-        4. If installed version >= requested version ==> do nothing
 
-Note: If a module is already installed but failes reinstall / update
-      The occurence is logged and the install request is considered successful.
+1. If the module is a Built-In ==> do nothing
+2. If the module is not installed ==> try to Install
+3. If module is installed and no version given ==> do nothing
+   - prevents accidental breaking of another plugin
+   - can be over-ridden by supplying version info
+4. If installed version >= requested version ==> do nothing
+
+Note: If a module is already installed but fails reinstall / update
+the occurrence is logged and the install request is considered successful.
 
 Logging is sent to journalctl with various messages indicating what was actually done.
 
@@ -52,16 +57,19 @@ Unsupported Conditional.
 
 pip could not handle the request.
 
-#  Note: python scripts in Duet3d plugins need to have a shebang
- 
-#!/usr/bin/python -u  
+## Note: python scripts in Duet3d plugins need to have a shebang
+
+```text
+#!/usr/bin/python -u
+```
 
 ## Tested in the following DSF environment
+
 3.5.x
 
 Installed as:
 
-/opt/dsf/bin/pipIinstall.py
+/opt/dsf/bin/pipInstall.py
 
 with
 
@@ -69,8 +77,8 @@ sudo chmod 744 /opt/dsf/bin/pipInstall.py
 
 sudo chown dsf:dsf /opt/dsf/bin/pipInstall.py
 
-The following entry is expected in `/opt/dfs/conf/plugins.json`
+The following entry is expected in `/opt/dsf/conf/plugins.json`
 
-  ```
-  "InstallPythonPackageCommand": "/opt/dsf/bin/pipInstall.py",
-  ```
+```text
+"InstallPythonPackageCommand": "/opt/dsf/bin/pipInstall.py",
+```

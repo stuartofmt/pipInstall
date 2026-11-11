@@ -61,6 +61,7 @@ The same descriptions work in a requirements file and directly in `sbcPythonDepe
 ### Version conditions
 
 Any standard (PEP 440) comparison can follow the name. Spaces around comparisons are allowed.
+See [Reference: version numbers and version conditions](#reference-version-numbers-and-version-conditions) for how betas and post-releases are treated.
 
 | Example | Meaning |
 | --- | --- |
@@ -219,3 +220,36 @@ The following entry is expected in `/opt/dsf/conf/plugins.json`:
 ```
 
 Python scripts in DSF plugins do not need a shebang line, provided the calling program runs them with a fully qualified path. If the plugin is itself a Python script, the plugin manager does this.
+
+## Reference: version numbers and version conditions
+
+Python package versions follow PEP 440. Pre-releases (alpha `a`, beta `b`, release candidate `rc`) sort **before** their release, and post-releases sort **after** it:
+
+```text
+3.7.0b1  <  3.7.0  <  3.7.0.post1
+```
+
+This is how each version condition treats a beta, the release and a post-release:
+
+| Condition | 3.7.0b1 | 3.7.0 | 3.7.0.post1 |
+| --- | --- | --- | --- |
+| `<=3.7.0` | ✓ | ✓ | ✗ |
+| `<3.7.0` | ✗ (special rule) | ✗ | ✗ |
+| `==3.7.0` | ✗ | ✓ | ✗ |
+| `==3.7.*` | ✓ | ✓ | ✓ |
+| `>=3.7.0` | ✗ | ✓ | ✓ |
+| `>3.7.0` | ✗ | ✗ | ✗ (special rule) |
+| `~=3.7.0` | ✗ | ✓ | ✓ |
+| `!=3.7.0` | ✓ | ✗ | ✓ |
+| `<3.7.1` | ✓ | ✓ | ✓ |
+
+Special rules (marked in the table):
+
+- `<V` excludes pre-releases of V itself. `<3.7.0` rejects `3.7.0b1` even though it sorts lower. `<=3.7.0` has no such rule and accepts it.
+- `>V` excludes post-releases of V itself. `>3.7.0` rejects `3.7.0.post1` even though it sorts higher. Use `>=3.7.0` to include post-releases.
+
+Practical choices:
+
+- **3.7.0 and its post-releases, nothing newer:** `>=3.7.0,<3.7.1`, or `==3.7.0.*`, which also accepts betas of 3.7.0. Avoid `<=3.7.0`, which shuts out post-releases.
+- **Anything in 3.7, including betas:** `>=3.7.0b1,<3.8`, or `==3.7.*`, which also accepts betas.
+- **A beta already installed should count as meeting the condition:** write the lower limit as a pre-release, e.g. `>=3.7.0b1` not `>=3.7.0`. Otherwise pipInstall2 sees that the beta does not meet the condition and installs the newest version that does.
