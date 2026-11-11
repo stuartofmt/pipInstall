@@ -8,7 +8,12 @@ There are two versions `pipInstall.py` and `pipInstall2.py`
 
 `pipInstall2.py` will be used from DWC 3.6.   It uses different calling parameters and is not backward compatible.  It creates a virtual environment for each plugin and iterates through all dependencies identified in the plugin manifest.
 
-## Documentation
+## Branches
 
-- [pipInstall](Version1/pipInstall.md) - Version 1 ([script](Version1/pipInstall.py))
-- [pipInstall2](Version2/pipInstall2.md) - Version 2 ([script](Version2/pipInstall2.py))
+Each version is kept on its own branch:
+
+| Branch | Contents |
+| --- | --- |
+| [pipInstall](https://github.com/stuartofmt/pipInstall/tree/pipInstall) | Version 1 - [documentation](https://github.com/stuartofmt/pipInstall/blob/pipInstall/pipInstall.md), [script](https://github.com/stuartofmt/pipInstall/blob/pipInstall/pipInstall.py) |
+| [pipInstall2](https://github.com/stuartofmt/pipInstall/tree/pipInstall2) | Version 2 - [documentation](https://github.com/stuartofmt/pipInstall/blob/pipInstall2/pipInstall2.md), [script](https://github.com/stuartofmt/pipInstall/blob/pipInstall2/pipInstall2.py), [release notes](https://github.com/stuartofmt/pipInstall/blob/pipInstall2/release-notes.md) |
+| master | This Readme only |

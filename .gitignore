@@ -5,3 +5,8 @@
 /.vs
 /.vscode
 venv/
+__pycache__/
+
+# Worktree folders - checkouts of the pipInstall and pipInstall2 branches
+Version1/
+Version2/
