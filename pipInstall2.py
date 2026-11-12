@@ -36,6 +36,15 @@ therefore installed modules take precedence over system modules (but not over th
 6) A module prefixed with ! (e.g. !simplejpeg) is always installed in the venv, even if a system copy
 	already meets the request (rules 2 and 3c do not apply). Use it to stop a system (e.g. apt) copy being used.
 
+Reading the requirements:
+- sbcPythonDependencies entries and the lines of any requirements files (.txt in <plugin path>/dsf)
+	are combined into one list. Comments and blank lines are removed
+- --verbose anywhere in the list turns on debug logging and is removed
+- --python<condition> (e.g. --python>=3.11) anywhere in the list is removed and the python version is checked
+	against it before anything is installed (exit code 15 if it does not match). Several are tested in turn (all must match)
+- every entry is corrected to valid requirements syntax (spaces removed, --user dropped,
+	platform markers applied) - the result is a virtual requirements file
+
 Install steps:
 0) modules marked ! are installed first with --ignore-installed --no-deps (dry run, then a single install,
 	falling back to one at a time). Their dependencies are installed in step b)
@@ -82,6 +91,7 @@ PATHFILENAME = 'plugin_path_change'
 IMPORTTESTFILE = 'import_test.py'
 REQFILENAME = 'pipInstall_requirements.txt'  # combined requirements written to the venv folder
 REPORTFILENAME = 'pipInstall_report.json'  # pip --dry-run report written to the venv folder
+PYTHONREQ = '--python'  # e.g. --python>=3.11 - required python version for the plugin
 VENVONLY_MARK = '!'  # prefix: always install the venv's own copy, ignoring any system copy
 VENVONLY_FLAGS = '--ignore-installed --no-deps'  # pip flags for the ! modules (dependencies installed afterwards)
 VENVONLY_REQFILENAME = 'pipInstall_venv_only_requirements.txt'
@@ -112,6 +122,7 @@ class ExitCodes(Enum):
 	PYTHON_SITE_ERROR = 12
 	REQUIREMENTS_FILE_NOT_FOUND = 13
 	PACKAGING_NOT_AVAILABLE = 14
+	PYTHON_VERSION_NOT_SUPPORTED = 15
 
 class modType(Enum):
 	BUILTIN = 'Builtin'
@@ -155,10 +166,6 @@ class Dependency:
 			dep.comparator = None
 			dep.version = None
 			return dep
-
-		if text.startswith('--user'):  # modules are always installed in the venv
-			text = text[len('--user'):].strip()
-			logger.warning(f'"--user" ignored for "{text}" - it will be installed in the plugin venv')
 
 		try:
 			req = Requirement(text)
@@ -423,64 +430,152 @@ def getModuleList(mFile):
 			logger.critical(f'"{mFile}" is not a properly formatted json file\n{e}')
 			shutDown(ExitCodes.MANIFEST_ERROR)
 
-	mList = [stripComment(m) for m in config[MANIFEST_KEY]]
-	mList = [m for m in mList if m != '']  # drop blank and comment-only entries
-	if mList and mList[0] == '--verbose':
-		verbose = True
-		mList = mList[1:]  # Remove the verbose flag
-	else:
-		verbose = False
-
+	mList = config[MANIFEST_KEY]
 	pluginname = config[NAME_KEY]
 
-	return mList, verbose , pluginname
+	return mList, pluginname
 
 def stripComment(entry):
 	# Remove trailing comment (pip rule: '#' at start or preceded by whitespace)
 	return COMMENT_RE.sub('', entry).strip()
 
-def checkForRequirementsFiles(moduleList, pluginPath):
-	updatedModuleList = []
-	for module in moduleList:
-		logger.debug(f'Checking module entry: {module}')
-		if module.endswith('.txt'):
-			# It's a requirements file
-			reqfile = os.path.normpath(os.path.join(pluginPath,'dsf', module))
+def combineRequirements(moduleList, pluginPath):
+	"""
+	Concatenate the sbcPythonDependencies entries and the lines of any requirements files (.txt)
+	into one list. Comments and blank lines are removed.
+	--verbose may appear anywhere (manifest or requirements file) - it is removed and reported
+	--python<condition> (e.g. --python>=3.11) may appear anywhere - removed, conditions are combined
+	Returns (lines, verbose, pythonConditions) - pythonConditions is a list, one item per --python entry
+	"""
+	lines = []
+	for entry in moduleList:
+		entry = stripComment(entry)
+		if entry == '':
+			continue  # blank or comment-only entry
+		if entry.endswith('.txt'):
+			# It's a requirements file in <plugin path>/dsf
+			reqfile = os.path.normpath(os.path.join(pluginPath, 'dsf', entry))
 			if not os.path.isfile(reqfile):
-				logger.critical(f'Requirements file "{module}" was not found at:\n{reqfile}')
+				logger.critical(f'Requirements file "{entry}" was not found at:\n{reqfile}')
 				shutDown(ExitCodes.REQUIREMENTS_FILE_NOT_FOUND)
-			logger.debug(f'Processing requirements file: {reqfile}')
+			logger.info(f'Reading requirements file: {reqfile}')
 			with open(reqfile, 'r') as f:
 				for line in f:
 					line = stripComment(line)
-					if line == '':
-						continue  # skip blank lines and comment-only lines
-					updatedModuleList.append(line)
+					if line != '':
+						lines.append(line)
 		else:
-			updatedModuleList.append(module)
-	return updatedModuleList
+			lines.append(entry)
 
-def applyEnvironmentMarkers(moduleList):
-	# Handle PEP 508 environment markers e.g. picamera2; sys_platform == "linux"
-	# Entries whose marker does not apply to this platform are dropped
-	updatedModuleList = []
-	for module in moduleList:
-		if ';' not in module:
-			updatedModuleList.append(module)
-			continue
-		req, marker = module.split(';', 1)
-		req = req.strip()
-		marker = marker.strip()
+	verbose = '--verbose' in lines
+	lines = [line for line in lines if line != '--verbose']
+
+	pythonConditions = [line[len(PYTHONREQ):].strip() for line in lines if line.startswith(PYTHONREQ)]
+	lines = [line for line in lines if not line.startswith(PYTHONREQ)]
+
+	return lines, verbose, pythonConditions
+
+def checkPythonVersion(pythonConditions, pythonFile):
+	"""
+	Test the venv python against each --python condition (e.g. >=3.11) in turn and log the result of each
+	Stop if any condition cannot be understood (INVALID_DEPENDENCY) or is not met (PYTHON_VERSION_NOT_SUPPORTED)
+	Needs packaging - call after checkPackaging
+	"""
+	if not pythonConditions:
+		return
+	from packaging.specifiers import SpecifierSet, InvalidSpecifier
+
+	cmd = f'{pythonFile} -c "import platform; print(platform.python_version())"'
+	version = runsubprocess(cmd)
+	if version is False:
+		logger.critical('Could not get the python version of the venv')
+		shutDown(ExitCodes.UNEXPECTED_ERROR)
+	version = version.strip()
+
+	logger.info(f'\nChecking the plugin\'s Python version requirements (this system has Python {version}):')
+	invalid = False
+	failed = False
+	for condition in pythonConditions:
 		try:
-			from packaging.markers import Marker
-			if not Marker(marker).evaluate():
-				logger.info(f'Skipping "{module}" - marker does not apply to this platform')
-				continue
-			logger.debug(f'Marker "{marker}" applies - using "{req}"')
+			spec = SpecifierSet(condition)
+			if len(spec) == 0:
+				raise InvalidSpecifier('no condition given')
+		except InvalidSpecifier as e:
+			logger.info(f'\t{PYTHONREQ}{condition} ==> Invalid - use e.g. {PYTHONREQ}>=3.11 ({e})')
+			invalid = True
+			continue
+		if spec.contains(version, prereleases=True):
+			logger.info(f'\t{PYTHONREQ}{condition} ==> Passed')
+		else:
+			logger.info(f'\t{PYTHONREQ}{condition} ==> Failed')
+			failed = True
+
+	if invalid:
+		logger.critical('One or more --python conditions could not be understood. Nothing was installed')
+		shutDown(ExitCodes.INVALID_DEPENDENCY)
+	if failed:
+		logger.critical(f'Python {version} does not meet the plugin\'s Python version requirements. Nothing was installed')
+		shutDown(ExitCodes.PYTHON_VERSION_NOT_SUPPORTED)
+
+def normaliseRequirement(line):
+	"""
+	Correct the syntax of one entry so it is a valid requirements file line e.g.
+		"numpy >= 1.2 , <2"          -> "numpy<2,>=1.2"
+		"--user dsf-python"          -> "dsf-python"  (with a warning)
+		"! simplejpeg"               -> "!simplejpeg"
+		"picamera2; sys_platform == 'linux'" -> "picamera2" on linux, dropped (None) elsewhere
+	git+ urls are passed through unchanged
+	An entry that cannot be corrected stops the install (INVALID_DEPENDENCY)
+	"""
+	from packaging.requirements import Requirement, InvalidRequirement
+
+	text = line.strip()
+
+	mark = ''
+	if text.startswith(VENVONLY_MARK):
+		mark = VENVONLY_MARK
+		text = text[len(VENVONLY_MARK):].strip()
+
+	if text.startswith('--user'):  # modules are always installed in the venv
+		text = text[len('--user'):].strip()
+		logger.warning(f'"--user" ignored for "{text}" - it will be installed in the plugin venv')
+
+	if text.startswith('git+'):
+		return mark + text
+
+	try:
+		req = Requirement(text)
+	except InvalidRequirement as e:
+		logger.critical(f'Invalid entry "{line}"\n{e}')
+		shutDown(ExitCodes.INVALID_DEPENDENCY)
+
+	if req.url:
+		logger.critical(f'Unsupported url form in "{line}" - use git+<url> instead')
+		shutDown(ExitCodes.INVALID_DEPENDENCY)
+
+	if req.marker is not None:
+		try:
+			if not req.marker.evaluate():
+				logger.info(f'Skipping "{line}" - marker does not apply to this platform')
+				return None
+			logger.debug(f'Marker "{req.marker}" applies to "{line}"')
 		except Exception as e:
-			logger.warning(f'Could not evaluate marker in "{module}": {e} - installing "{req}" anyway')
-		updatedModuleList.append(req)
-	return updatedModuleList	
+			logger.warning(f'Could not evaluate marker in "{line}": {e} - installing it anyway')
+
+	extras = f'[{",".join(sorted(req.extras))}]' if req.extras else ''
+	return f'{mark}{req.name}{extras}{req.specifier}'
+
+def normaliseRequirements(lines):
+	# Correct the syntax of every entry - the result is a virtual requirements file
+	result = []
+	for line in lines:
+		fixed = normaliseRequirement(line)
+		if fixed is None:
+			continue  # marker does not apply
+		if fixed != line:
+			logger.debug(f'"{line}" ==> "{fixed}"')
+		result.append(fixed)
+	return result
 
 
 def getFreezeList(pythonFile) -> str:
@@ -890,16 +985,19 @@ def main(progName):
 	#add log file
 	createLogfile(logfilename, FALLBACK_LOGFILENAME)
 	
-	# parse the manifestfile file
-	verbose = True
-	moduleList, verbose, pluginName = getModuleList(manifestFile)
+	# Read the manifest file
+	moduleList, pluginName = getModuleList(manifestFile)
 
 	logger.info(f'Plugin name is : {pluginName}')
+
+	# One list of the manifest entries and the contents of any requirements files
+	moduleList, verbose, pythonConditions = combineRequirements(moduleList, pluginPath)
 
 	#--verbose flag set adjust output level
 	if verbose:
 		logger.setLevel(logging.DEBUG)
 		pipQuiet = ''
+		logger.debug('--verbose found - debug logging on')
 
 	# Find the venv site-packages path (.pth hook currently disabled)
 	sitePath = createVenvFiles(pythonFile, venvPath)
@@ -910,11 +1008,12 @@ def main(progName):
 	# packaging is needed to parse the module list - installed into the venv if missing
 	checkPackaging(pythonFile, sitePath)
 
-	# Check moduleList for requirements files
-	moduleList = checkForRequirementsFiles(moduleList, pluginPath)
+	# Stop before installing anything if the python version does not meet --python
+	checkPythonVersion(pythonConditions, pythonFile)
 
-	# Drop modules whose environment marker does not match this platform
-	moduleList = applyEnvironmentMarkers(moduleList)
+	# Correct the syntax of every entry (drops entries whose platform marker does not apply)
+	moduleList = normaliseRequirements(moduleList)
+	logger.info('\nRequirements (manifest and requirements files combined):\n\t' + '\n\t'.join(moduleList))
 
 	# Resolve the requested modules to a name and version
 	# Create a list of modules to instal and their current versions

@@ -19,6 +19,10 @@ Newest first. See [readme.md](readme.md) for a description of what pipInstall2 d
 - Removed `--force-reinstall` (dependencies were reinstalled and re-downloaded every time)
 - pip runs with `--no-cache-dir` (and `PIP_NO_CACHE_DIR=1` while creating the venv) and the pip cache is purged after installing, to save SD card space. The cache is per user (e.g. `~/.cache/pip`) - under DSF it is already disabled because the `dsf` user's home (`/`) is not writable
 - Already installed modules with no version requested are no longer upgraded (rule 2 now applies to pip modules too)
+- `sbcPythonDependencies` and the contents of requirements files are combined into one list, and each entry is corrected to standard requirements syntax (spaces, `--user`, platform markers). The combined list is logged
+- `--verbose` can now be anywhere in `sbcPythonDependencies` or a requirements file (previously it had to be the first manifest entry)
+- `--python<condition>` (e.g. `--python>=3.11`) sets the Python version the plugin needs. If the system's Python does not meet it, nothing is installed and pipInstall2 exits with the new exit code 15
+- Documentation split: [readme.md](readme.md) covers the usual case (packages and versions); special entries, markers, git URLs, overriding system packages and the version-number reference moved to [special_cases.md](special_cases.md)
 - A package prefixed with `!` (e.g. `!simplejpeg`) is always installed in the venv, even if a system copy already meets the request. These are installed first with `--ignore-installed --no-deps`; their dependencies are installed with everything else. For overriding system (apt) packages, e.g. picamera2 built against numpy 1.x on Bookworm
 - The `.pth` / `.py` sys.path hook is no longer written to the venv (code commented out). Normal venv ordering already puts venv packages ahead of system packages; the hook also put them ahead of the standard library, which let PyPI backports (e.g. argparse) shadow stdlib modules
 - Trailing comments are ignored e.g. `numpy==1.26  # needed for X`
