@@ -2,7 +2,7 @@
 
 Newest first. See [readme.md](readme.md) for a description of what pipInstall2 does and how to use it.
 
-## Version 2.4.0-alpha.1 - Stuart Strolin
+## Version 2.4.0-beta.1 - Stuart Strolin
 
 - Argument errors now exit with their exit codes (previously crashed with IndexError / NameError)
 - The venv python no longer prints the site-packages path every time it starts

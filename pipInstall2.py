@@ -80,7 +80,7 @@ from typing import Optional
 
 
 # CONSTANTS
-THIS_VERSION = '2.4.0-alpha.1'
+THIS_VERSION = '2.4.0-beta.1'
 VENV_FOLDER = 'venv'
 MANIFEST_KEY = 'sbcPythonDependencies'
 NAME_KEY = 'name'
