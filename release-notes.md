@@ -2,6 +2,10 @@
 
 Newest first. See [readme.md](readme.md) for a description of what pipInstall2 does and how to use it.
 
+## Version 2.4.0-beta.2 - Stuart Strolin
+
+- Removed the `!` prefix (added in 2.4.0-beta.1). An entry starting with `!` is now an invalid entry (exit code 11). The "Overriding a system package" section was removed from [special_cases.md](special_cases.md)
+
 ## Version 2.4.0-beta.1 - Stuart Strolin
 
 - Argument errors now exit with their exit codes (previously crashed with IndexError / NameError)

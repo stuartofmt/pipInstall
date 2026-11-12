@@ -117,8 +117,6 @@ Each package is checked against what is already available, including the system'
 | Installed at a version that does not meet the condition, or the version cannot be determined | Installed |
 | Not installed | Installed - the latest version, or the latest version that meets the condition |
 
-To make sure the plugin gets its own copy even when the system already has a suitable one, see [Overriding a system package](special_cases.md#overriding-a-system-package).
-
 ### 4. Install packages
 
 1. **Dry run.** pip is asked what it would install for all the packages together (`pip install --dry-run`). The log lists each package and version that will be installed, marked as `requested` or `dependency`.
@@ -144,11 +142,10 @@ pipInstall2 also leaves these files in `<plugin path>/venv`:
 
 ## Special Cases
 
-- [Special entries](special_cases.md#special-entries) - `--verbose`, `--python`, `!`, `--user`
+- [Special entries](special_cases.md#special-entries) - `--verbose`, `--python`, `--user`
 - [Platform conditions](special_cases.md#platform-conditions-environment-markers) - packages for some systems only, e.g. `picamera2; sys_platform == "linux"`
 - [Installing from a git repository](special_cases.md#installing-from-a-git-repository)
 - [Requiring a Python version](special_cases.md#requiring-a-python-version)
-- [Overriding a system package](special_cases.md#overriding-a-system-package) - e.g. picamera2 and numpy 1 / numpy 2 on Bookworm
 - [How entries are corrected](special_cases.md#how-entries-are-corrected)
 - [Not supported](special_cases.md#not-supported)
 - [Version numbers: pre-releases and post-releases](special_cases.md#version-numbers-pre-releases-and-post-releases)
