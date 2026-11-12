@@ -14,54 +14,6 @@ Both <manifest file. and <plugin path> are fully qualified
 A virtual environment will be created for python at
 <plugin Path>/VENV_FOLDER   (see constant section)
 
-A version condition can be supplied using any standard (PEP 440) comparison:
-==  !=  >=  <=  >  <  ~=  ===
-Several conditions can be combined with commas and spaces are allowed e.g.
-numpy>=1.2,<2.0
-pkg[extra] >= 1, != 1.3
-numpy==1.*
-
-Rules:
-1) If module is built-in it will be ignored
-2) If module is already installed and no version is requested it will be ignored (it is not upgraded)
-3) If module is not installed it will be installed
-	3a) If no version - it will be installed at the latest version
-	3b) If version is requested it will be installed at a version that meets the condition
-	3c) If module is already installed at a version that meets the condition it will be ignored
-	If the installed version does not meet the condition (or cannot be determined) it will be installed
-
-4) Installed modules will be placed in site-packages of the virtual environment
-5) venv site-packages is ahead of the system site-packages in sys.path (standard venv behaviour)
-therefore installed modules take precedence over system modules (but not over the standard library)
-6) A module prefixed with ! (e.g. !simplejpeg) is always installed in the venv, even if a system copy
-	already meets the request (rules 2 and 3c do not apply). Use it to stop a system (e.g. apt) copy being used.
-
-Reading the requirements:
-- sbcPythonDependencies entries and the lines of any requirements files (.txt in <plugin path>/dsf)
-	are combined into one list. Comments and blank lines are removed
-- --verbose anywhere in the list turns on debug logging and is removed
-- --python<condition> (e.g. --python>=3.11) anywhere in the list is removed and the python version is checked
-	against it before anything is installed (exit code 15 if it does not match). Several are tested in turn (all must match)
-- every entry is corrected to valid requirements syntax (spaces removed, --user dropped,
-	platform markers applied) - the result is a virtual requirements file
-
-Install steps:
-0) modules marked ! are installed first with --ignore-installed --no-deps (dry run, then a single install,
-	falling back to one at a time). Their dependencies are installed in step b)
-a) pip install --dry-run (with --report) of all modules that need installing - logs what will actually be installed
-	including dependencies. The report is kept at <plugin Path>/venv/pipInstall_report.json
-b) a single pip install -r of all of them, so pip resolves them together (consistent versions)
-c) if a) or b) fails, the modules are installed one at a time so the others still install,
-	and each failure is reported with pip's error message
-"--user" is ignored (with a warning) - all modules are installed in the plugin venv
-
-Exit Codes:
-
-See class ExitCodes below.
-
-Release notes:
-
-See release-notes.md
 """
 
 
