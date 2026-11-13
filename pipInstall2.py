@@ -394,6 +394,11 @@ def combineRequirements(moduleList, pluginPath):
 		entry = stripComment(entry)
 		if entry == '':
 			continue  # blank or comment-only entry
+		if re.search(r'\.txt\S+$', entry, flags=re.IGNORECASE):
+			# e.g. requirements.txt1 - a mistyped file name would otherwise be looked up on PyPI as a package
+			logger.critical(f'"{entry}" looks like a requirements file name but does not end in ".txt"\n'
+					'Requirements files in sbcPythonDependencies must end in ".txt"')
+			shutDown(ExitCodes.REQUIREMENTS_FILE_NOT_FOUND)
 		if entry.endswith('.txt'):
 			# It's a requirements file in <plugin path>/dsf
 			reqfile = os.path.normpath(os.path.join(pluginPath, 'dsf', entry))
@@ -600,10 +605,14 @@ def purgePipCache(pythonFile):
 	except OSError as e:
 		logger.info(f'pip cache purge not run: {e}')
 		return
+	output = (result.stderr or result.stdout).strip()
 	if result.returncode == 0:
 		logger.info(f'pip cache purged: {result.stdout.strip()}')
+	elif 'cache is disabled' in output:
+		# Normal under DSF - the cache could not be used, so there is nothing to purge
+		logger.debug('pip cache is disabled - nothing to purge')
 	else:
-		logger.info(f'pip cache not purged (cache may be disabled): {(result.stderr or result.stdout).strip()}')
+		logger.info(f'pip cache not purged: {output}')
 
 def runPip(cmd):
 	# Run a pip command without raising - returns (ok, stdout, stderr)

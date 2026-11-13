@@ -42,7 +42,7 @@ Rules for requirements files:
 
 - An entry in `sbcPythonDependencies` that ends in `.txt` is treated as a requirements file.
 - The file is looked for in `<plugin path>/dsf/`. A subfolder can be given e.g. `extras/camera.txt`.
-- If the file is not found, pipInstall2 stops with exit code 13.
+- If the file is not found, pipInstall2 stops with exit code 13. So does an entry that looks like a mistyped file name, e.g. `requirements.txt1`, instead of it being looked up on PyPI as a package.
 - Requirements files cannot include other requirements files. Only `.txt` entries in plugin.json are expanded.
 
 ## Describing packages
@@ -192,6 +192,6 @@ Both paths should be fully qualified. DSF supplies these when it installs a plug
 | 10 | One or more packages failed to install |
 | 11 | Invalid package entry (could not be understood) |
 | 12 | Could not get site-packages information from the venv |
-| 13 | Requirements file not found in `<plugin path>/dsf` |
+| 13 | Requirements file not found in `<plugin path>/dsf`, or an entry looks like a mistyped requirements file name (e.g. `requirements.txt1`) |
 | 14 | The Python `packaging` module is not available and could not be installed into the venv |
 | 15 | The system's Python version does not meet the plugin's [`--python`](special_cases.md#requiring-a-python-version) condition |

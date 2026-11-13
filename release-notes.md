@@ -2,6 +2,11 @@
 
 Newest first. See [readme.md](readme.md) for a description of what pipInstall2 does and how to use it.
 
+## Unreleased
+
+- An entry that looks like a mistyped requirements file name (e.g. `requirements.txt1`) now stops with exit code 13, instead of being looked up on PyPI as a package
+- When the pip cache is disabled (normal under DSF), the cache purge no longer logs pip's warning and error - it is logged at debug level only
+
 ## Version 2.4.0-beta.2 - Stuart Strolin
 
 - Removed the `!` prefix (added in 2.4.0-beta.1). An entry starting with `!` is now an invalid entry (exit code 11). The "Overriding a system package" section was removed from [special_cases.md](special_cases.md)
