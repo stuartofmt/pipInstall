@@ -18,6 +18,6 @@ Documentation for each version of pipInstall2 - usage, package descriptions, exi
 | pipInstall2 | For DWC / DSF | Documentation | Code |
 | --- | --- | --- | --- |
 | 2.4 | 3.7 | [docs/2.4](docs/2.4/README.md) - in development | [pipInstall2](https://github.com/stuartofmt/pipInstall/tree/pipInstall2) branch |
-| 2.1 | 3.6 | [docs/2.1](docs/2.1/README.md) | [Version 2.1.0](https://github.com/stuartofmt/pipInstall/tree/39b06fb90f6b7e5320c46453941d6affdcf4d55f/Version2) (commit 39b06fb) |
+| 2.1 | 3.6 | [docs/2.1](docs/2.1/README.md) | Tag [v2.1.0](https://github.com/stuartofmt/pipInstall/tree/v2.1.0/Version2) |
 
 pipInstall (Version 1, **no longer maintained**) is in the [pipInstall](https://github.com/stuartofmt/pipInstall/tree/pipInstall) branch, with its [documentation](https://github.com/stuartofmt/pipInstall/blob/pipInstall/readme.md).
