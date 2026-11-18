@@ -2,7 +2,7 @@
 
 pipInstall2 installs the Python packages a DSF plugin needs on the SBC. Each plugin gets its own Python virtual environment (venv).
 
-This is the documentation for pipInstall2 2.1.0, for DSF 3.6 ([other versions](../../Readme.md#versions)). For what changed in this version see [change-notes.md](change-notes.md).
+This is the documentation for pipInstall2 2.1.0, for DSF 3.6 and 3.7 ([other versions](../../Readme.md#versions)). For what changed in this version see [change-notes.md](change-notes.md).
 
 DSF calls pipInstall2 when a plugin is installed, passing it the plugin's `plugin.json` and the plugin's folder. The packages to install come from the `sbcPythonDependencies` entry in `plugin.json`.
 

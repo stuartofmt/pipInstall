@@ -2,7 +2,7 @@
 
 pipInstall2 is a front-end for python pip that simplifies the installation of Python packages used with a DSF plugin.
 
-This is the documentation for pipInstall2 2.4 (in development), for DSF 3.7 ([other versions](../../Readme.md#versions)).
+This is the documentation for pipInstall2 2.4 (in development), for DSF 3.6 and 3.7 ([other versions](../../Readme.md#versions)).
 
 Each plugin gets its own Python virtual environment (venv), so packages for one plugin cannot break another plugin or the system Python.
 
