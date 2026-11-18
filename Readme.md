@@ -11,12 +11,13 @@ There are two versions `pipInstall.py` and `pipInstall2.py`
 
 `pipInstall2.py` will be used from DWC 3.6.   It uses different calling parameters and is not backward compatible.  It creates a virtual environment for each plugin and iterates through all dependencies identified in the plugin manifest.
 
-## Branches
+## Versions
 
-Each version is kept on its own branch:
+Documentation for each version of pipInstall2 - usage, package descriptions, exit codes and change notes:
 
-| Branch | Contents |
-| --- | --- |
-| [pipInstall](https://github.com/stuartofmt/pipInstall/tree/pipInstall) | Version 1 (**no longer maintained**) - [documentation](https://github.com/stuartofmt/pipInstall/blob/pipInstall/readme.md), [script](https://github.com/stuartofmt/pipInstall/blob/pipInstall/pipInstall.py) |
-| [pipInstall2](https://github.com/stuartofmt/pipInstall/tree/pipInstall2) | Version 2 - [documentation](https://github.com/stuartofmt/pipInstall/blob/pipInstall2/readme.md), [script](https://github.com/stuartofmt/pipInstall/blob/pipInstall2/pipInstall2.py), [release notes](https://github.com/stuartofmt/pipInstall/blob/pipInstall2/release-notes.md) |
-| master | This Readme only |
+| pipInstall2 | For DWC / DSF | Documentation | Code |
+| --- | --- | --- | --- |
+| 2.4 | 3.7 | [docs/2.4](docs/2.4/README.md) - in development | [pipInstall2](https://github.com/stuartofmt/pipInstall/tree/pipInstall2) branch |
+| 2.1 | 3.6 | [docs/2.1](docs/2.1/README.md) | [Version 2.1.0](https://github.com/stuartofmt/pipInstall/tree/39b06fb90f6b7e5320c46453941d6affdcf4d55f/Version2) (commit 39b06fb) |
+
+pipInstall (Version 1, **no longer maintained**) is in the [pipInstall](https://github.com/stuartofmt/pipInstall/tree/pipInstall) branch, with its [documentation](https://github.com/stuartofmt/pipInstall/blob/pipInstall/readme.md).
