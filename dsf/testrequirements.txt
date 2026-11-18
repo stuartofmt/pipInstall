@@ -1,0 +1,4 @@
+# Test requirements for normal_test.sh
+picamera2
+opencv-python-headless
+numpy<2

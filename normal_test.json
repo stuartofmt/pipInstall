@@ -2,6 +2,6 @@
 "name": "pipInstall2Test",
 "xsbcPythonDependencies": ["--verbose","--user dsf-python"],
 "ysbcPythonDependencies": ["--verbose","requirements.txt"],
-"sbcPythonDependencies": ["--verbose","requirements.txt","argparse>=1.2", "shlex", "sys","os","re","time","requests","json==2.0.0","signal"],
-"zbcPythonDependencies": ["--verbose", "shlex", "sys","os","re","time","requests","json==2.0.0","signal"]
-}		
+"sbcPythonDependencies": ["--verbose","testrequirements.txt # forces numpy<2 and likely build from source","argparse>=1.2", "shlex", "sys","os","re","time","requests","#json==2.0.0 # should cause failure","signal"],
+"zsbcPythonDependencies": ["--verbose", "testrequirements.txt # result in numpy < 2"]
+}

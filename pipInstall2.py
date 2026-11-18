@@ -17,6 +17,7 @@ A virtual environment will be created for python at
 """
 
 
+import shutil
 import subprocess
 import sys
 import logging
@@ -44,939 +45,1127 @@ IMPORTTESTFILE = 'import_test.py'
 REQFILENAME = 'pipInstall_requirements.txt'  # combined requirements written to the venv folder
 REPORTFILENAME = 'pipInstall_report.json'  # pip --dry-run report written to the venv folder
 PYTHONREQ = '--python'  # e.g. --python>=3.11 - required python version for the plugin
-pipQuiet = '-qq' #Reduce pip output
-PIPNOCACHE = '--no-cache-dir' # Don't write downloads/builds to the pip cache (saves SD card space and writes)
-COMMENT_RE = re.compile(r'(^|\s)#.*$') # '#' at start or preceded by whitespace (pip rule)
+pipQuiet = '-qq'  # Reduce pip output
+PIPNOCACHE = '--no-cache-dir'  # Don't write downloads/builds to the pip cache (saves SD card space and writes)
+PIPPREFERBINARY = '--prefer-binary'  # Prefer the newest version with a wheel over building a newer version from source
+buildToolsChecked = False  # The build tools are only checked (and logged) once
+COMMENT_RE = re.compile(r'(^|\s)#.*$')  # '#' at start or preceded by whitespace (pip rule)
 
 if os.name == 'nt':  # Windows
-	BIN_DIR = 'Scripts'
-	PYTHON_VERSION = 'python.exe'
+    BIN_DIR = 'Scripts'
+    PYTHON_VERSION = 'python.exe'
 else:
-	BIN_DIR = 'bin' # Linux
-	PYTHON_VERSION = 'python'
+    BIN_DIR = 'bin'  # Linux
+    PYTHON_VERSION = 'python'
+
 
 class ExitCodes(Enum):
-	SUCCESS = 0
-	NO_MANIFEST_PROVIDED = 1
-	MANIFEST_DOES_NOT_EXIST = 2
-	NO_PLUGIN_PROVIDED = 3
-	PLUGIN_DOES_NOT_EXIST = 4
-	PROBLEM_CREATING_VENV = 6
-	MANIFEST_ERROR = 7
-	PIP_LIST_ERROR = 8
-	UNEXPECTED_ERROR = 9
-	FAILED_TO_INSTALL_MODULE = 10
-	INVALID_DEPENDENCY = 11
-	PYTHON_SITE_ERROR = 12
-	REQUIREMENTS_FILE_NOT_FOUND = 13
-	PACKAGING_NOT_AVAILABLE = 14
-	PYTHON_VERSION_NOT_SUPPORTED = 15
+    SUCCESS = 0
+    NO_MANIFEST_PROVIDED = 1
+    MANIFEST_DOES_NOT_EXIST = 2
+    NO_PLUGIN_PROVIDED = 3
+    PLUGIN_DOES_NOT_EXIST = 4
+    PROBLEM_CREATING_VENV = 6
+    MANIFEST_ERROR = 7
+    PIP_LIST_ERROR = 8
+    UNEXPECTED_ERROR = 9
+    FAILED_TO_INSTALL_MODULE = 10
+    INVALID_DEPENDENCY = 11
+    PYTHON_SITE_ERROR = 12
+    REQUIREMENTS_FILE_NOT_FOUND = 13
+    PACKAGING_NOT_AVAILABLE = 14
+    PYTHON_VERSION_NOT_SUPPORTED = 15
+    DEPENDENCY_CONFLICT = 16
+
 
 class modType(Enum):
-	BUILTIN = 'Builtin'
-	INSTALLEDWITHVERSION = 'already Installed with version'
-	INSTALLEDNOVERSION = 'already installed with no version number'
-	PIPWITHVERSION = 'previously installed by Pip with version'
-	PIPNOVERSION = 'previously installed by Pip with no Version number'
-	NOTINSTALLED = 'not previously installed'
+    BUILTIN = 'Builtin'
+    INSTALLEDWITHVERSION = 'already Installed with version'
+    INSTALLEDNOVERSION = 'already installed with no version number'
+    PIPWITHVERSION = 'installed in the venv with version'
+    SYSTEMWITHVERSION = 'found in the system packages with version'
+    PIPNOVERSION = 'previously installed by Pip with no Version number'
+    NOTINSTALLED = 'not previously installed'
+
 
 class Dependency:
-	# Parsing uses packaging.requirements (PEP 508) so names, extras and version
-	# conditions (including ranges e.g. >=1.2,<2.0) follow the same rules as pip
-	# git+ urls are handled separately
-	# A leading --user (e.g. --user dsf-python) is ignored - modules are always installed in the venv
+    # Parsing uses packaging.requirements (PEP 508) so names, extras and version
+    # conditions (including ranges e.g. >=1.2,<2.0) follow the same rules as pip
+    # git+ urls are handled separately
+    # A leading --user (e.g. --user dsf-python) is ignored - modules are always installed in the venv
 
-	def __init__(self) -> None:
-		self.package: str = None
-		self.version: str = None
-		self.comparator: str = None
+    def __init__(self) -> None:
+        self.package: str = None
+        self.version: str = None
+        self.comparator: str = None
 
-	@classmethod
-	def parse(cls, text: str) -> Optional['Dependency']:
-		"""Convert text from sbcPythonDependencies (or a requirements file) into object
-		Args:
-			text (str): line from sbcPythonDependencies
-		"""
-		from packaging.requirements import Requirement, InvalidRequirement
+    @classmethod
+    def parse(cls, text: str) -> Optional['Dependency']:
+        """Convert text from sbcPythonDependencies (or a requirements file) into object
+        Args:
+            text (str): line from sbcPythonDependencies
+        """
+        from packaging.requirements import Requirement, InvalidRequirement
 
-		text = text.strip()
-		dep = Dependency()
+        text = text.strip()
+        dep = Dependency()
 
-		if text.startswith('git+'):
-			# Git dependency
-			dep.package = text
-			dep.comparator = None
-			dep.version = None
-			return dep
+        if text.startswith('git+'):
+            # Git dependency
+            dep.package = text
+            dep.comparator = None
+            dep.version = None
+            return dep
 
-		try:
-			req = Requirement(text)
-		except InvalidRequirement as e:
-			logger.error(f"Could not find package name in \"{text}\"\n{e}")
-			return None
+        try:
+            req = Requirement(text)
+        except InvalidRequirement as e:
+            logger.error(f"Could not find package name in \"{text}\"\n{e}")
+            return None
 
-		if req.url:
-			logger.error(f"Unsupported url form in \"{text}\" - use git+<url> instead")
-			return None
+        if req.url:
+            logger.error(f"Unsupported url form in \"{text}\" - use git+<url> instead")
+            return None
 
-		# Standard PyPi dependency
-		extras = f'[{",".join(sorted(req.extras))}]' if req.extras else ''
-		dep.package = req.name + extras
-		dep.comparator = str(req.specifier)  # e.g. '>=1.2,<2.0' or '' if none
-		dep.version = ''  # full condition is held in comparator
+        # Standard PyPi dependency
+        extras = f'[{",".join(sorted(req.extras))}]' if req.extras else ''
+        dep.package = req.name + extras
+        dep.comparator = str(req.specifier)  # e.g. '>=1.2,<2.0' or '' if none
+        dep.version = ''  # full condition is held in comparator
 
-		return dep
+        return dep
+
 
 def createVenvFiles(pythonFile, envPath):
-	"""
-	Finds and returns the venv site-packages path.
-	(The .pth hook that moved site-packages to the front of sys.path is currently disabled - see below)
-	"""
+    """
+    Finds and returns the venv site-packages path.
+    (The .pth hook that moved site-packages to the front of sys.path is currently disabled - see below)
+    """
 
-	cmd = f'{pythonFile} -m site'
-	request = runsubprocess(cmd)
-	if request is False:
-		logger.critical('Aborting: Failed to get site info')
-		shutDown(ExitCodes.PYTHON_SITE_ERROR)
-	sitePackagesPath = ''
-	for line in request.splitlines():
-		if ('site-packages' in line) and (envPath in line):
-			sitePackagesPath = line.strip()
-			sitePackagesPath = sitePackagesPath.replace('(', '')
-			sitePackagesPath = sitePackagesPath.replace(')', '')
-			sitePackagesPath = sitePackagesPath.replace("'", '')
-			sitePackagesPath = sitePackagesPath.replace(',', '')
-			logger.debug(f'Found site-packages at: {sitePackagesPath}')
-			break
+    cmd = f'{pythonFile} -m site'
+    request = runsubprocess(cmd)
+    if request is False:
+        logger.critical('Aborting: Failed to get site info')
+        shutDown(ExitCodes.PYTHON_SITE_ERROR)
+    sitePackagesPath = ''
+    for line in request.splitlines():
+        if ('site-packages' in line) and (envPath in line):
+            sitePackagesPath = line.strip()
+            sitePackagesPath = sitePackagesPath.replace('(', '')
+            sitePackagesPath = sitePackagesPath.replace(')', '')
+            sitePackagesPath = sitePackagesPath.replace("'", '')
+            sitePackagesPath = sitePackagesPath.replace(',', '')
+            logger.debug(f'Found site-packages at: {sitePackagesPath}')
+            break
 
-	# .pth hook DISABLED (may be restored later).
-	# A venv's site-packages is already ahead of the system site-packages in sys.path,
-	# so the hook's only effect was to move it ahead of the standard library too -
-	# which lets venv packages (e.g. old PyPI backports like argparse / enum34) shadow stdlib modules.
-	#
-	# # Create the path change file to ensure site-packages is at the front of sys.path
-	# pyfile = (
-	# 		f'''import sys\n'''
-	# 		f'''sys.path.remove('{sitePackagesPath}')\n'''
-	# 		f'''sys.path.insert(0, '{sitePackagesPath}')\n'''
-	# 		)
-	#
-	# #.pth file just imports the above file
-	# pthfile=f'''import {PATHFILENAME}\n'''
-	#
-	# file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.py'))
-	# logger.debug(f'Creating path change file at: {file}')
-	# with open(file, 'w+') as f:
-	# 	f.write(pyfile)
-	#
-	# file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.pth'))
-	# logger.debug(f'Creating pth file at: {file}')
-	# with open(file, 'w+') as f:
-	# 	f.write(pthfile)
+    # .pth hook DISABLED (may be restored later).
+    # A venv's site-packages is already ahead of the system site-packages in sys.path,
+    # so the hook's only effect was to move it ahead of the standard library too -
+    # which lets venv packages (e.g. old PyPI backports like argparse / enum34) shadow stdlib modules.
+    #
+    # # Create the path change file to ensure site-packages is at the front of sys.path
+    # pyfile = (
+    #         f'''import sys\n'''
+    #         f'''sys.path.remove('{sitePackagesPath}')\n'''
+    #         f'''sys.path.insert(0, '{sitePackagesPath}')\n'''
+    #         )
+    #
+    # #.pth file just imports the above file
+    # pthfile=f'''import {PATHFILENAME}\n'''
+    #
+    # file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.py'))
+    # logger.debug(f'Creating path change file at: {file}')
+    # with open(file, 'w+') as f:
+    #     f.write(pyfile)
+    #
+    # file = os.path.normpath(os.path.join(sitePackagesPath , f'{PATHFILENAME}.pth'))
+    # logger.debug(f'Creating pth file at: {file}')
+    # with open(file, 'w+') as f:
+    #     f.write(pthfile)
 
-	return sitePackagesPath
+    return sitePackagesPath
+
 
 def createImportTestFile(sitePackagesPath):
-	"""
-	Creates a small python script that can be called to test if a module
-	can be imported and get its version
-	This is installed in the venv so we can call it before and after 
-	the the install to check if the module is installed and its version
-	"""
+    """
+    Creates a small python script that can be called to test if a module
+    can be imported and get its version
+    This is installed in the venv so we can call it before and after
+    the the install to check if the module is installed and its version
+    """
 
-	importtestfile = (
-	f'''import sys\n'''
-	f'''\n\n'''
-	f'''def importTest(m):\n'''
-	f'''\ttry:\n'''
-	f'''\t\tglobals()[m] = __import__(m)\n'''
-	f'''\t\tresult = globals()[m].__version__\n'''
-	f'''\t\treturn result, 'INSTALLEDWITHVERSION'\n'''
-	f'''\texcept (AttributeError): # No version information\n'''
-	f'''\t\tif globals()[m].__name__ == m: # Module is installed so treat it as a builtin\n'''
-	f'''\t\t\treturn 'No version information', 'INSTALLEDNOVERSION'\n'''
-	f'''\t\telse:\n'''
-	f'''\t\t\treturn 'Attribute error with no name match', 'NOTINSTALLED'\n'''
-	f'''\texcept (ImportError, ModuleNotFoundError):\n'''
-	f'''\t\treturn 'Module not able to be imported', 'NOTINSTALLED'\n'''
-	f'''\texcept Exception as e:\n'''
-	f'''\t\treturn f'Exception trying to import module: {{e}}', 'NOTINSTALLED'\n'''
-	f'''\n\n'''
-	f'''m = sys.argv[1]\n'''\
-	f'''result, resultType = importTest(m)\n'''
-	f'''print(f'{{result}}, {{resultType}}')\n'''
-	)
+    importtestfile = (
+        f'''import sys\n'''
+        f'''\n\n'''
+        f'''def importTest(m):\n'''
+        f'''\ttry:\n'''
+        f'''\t\tglobals()[m] = __import__(m)\n'''
+        f'''\t\tresult = globals()[m].__version__\n'''
+        f'''\t\treturn result, 'INSTALLEDWITHVERSION'\n'''
+        f'''\texcept (AttributeError): # No version information\n'''
+        f'''\t\tif globals()[m].__name__ == m: # Module is installed so treat it as a builtin\n'''
+        f'''\t\t\treturn 'No version information', 'INSTALLEDNOVERSION'\n'''
+        f'''\t\telse:\n'''
+        f'''\t\t\treturn 'Attribute error with no name match', 'NOTINSTALLED'\n'''
+        f'''\texcept (ImportError, ModuleNotFoundError):\n'''
+        f'''\t\treturn 'Module not able to be imported', 'NOTINSTALLED'\n'''
+        f'''\texcept Exception as e:\n'''
+        f'''\t\treturn f'Exception trying to import module: {{e}}', 'NOTINSTALLED'\n'''
+        f'''\n\n'''
+        f'''m = sys.argv[1]\n'''
+        f'''result, resultType = importTest(m)\n'''
+        f'''print(f'{{result}}, {{resultType}}')\n'''
+    )
 
-	file = os.path.normpath(os.path.join(sitePackagesPath , f'{IMPORTTESTFILE}'))
-	logger.debug(f'Creating Import Test file at: {file}')
-	with open(file, 'w+') as f:
-		f.write(importtestfile)
-
+    file = os.path.normpath(os.path.join(sitePackagesPath, f'{IMPORTTESTFILE}'))
+    logger.debug(f'Creating Import Test file at: {file}')
+    with open(file, 'w+') as f:
+        f.write(importtestfile)
 
 
 def createLogger(progname):  # Create a custom logger so messages go to journalctl
-	global logger
-	logger = logging.getLogger(progname)
-	logger.propagate = False
-	# Create handler for console output
-	c_handler = logging.StreamHandler()
-	c_format = logging.Formatter('%(message)s')
-	c_handler.setFormatter(c_format)
-	logger.addHandler(c_handler)
-	logger.setLevel(logging.INFO) #Initial Setting
+    global logger
+    logger = logging.getLogger(progname)
+    logger.propagate = False
+    # Create handler for console output
+    c_handler = logging.StreamHandler()
+    c_format = logging.Formatter('%(message)s')
+    c_handler.setFormatter(c_format)
+    logger.addHandler(c_handler)
+    logger.setLevel(logging.INFO)  # Initial Setting
 
 
-def createLogfile(logfilename, fallback_logfilename): 
-	global logger
-	filehandler = None
-	for handler in logger.handlers:
-		if handler.__class__.__name__ == "FileHandler":
-			filehandler = handler
-			break # There is only ever one
-	
-	if filehandler != None:  #  Get rid of it
-		filehandler.flush()
-		filehandler.close()
-		logger.removeHandler(filehandler)
-	try:
-		f_handler = logging.FileHandler(logfilename, mode='w', encoding='utf-8')
-	except: # Could be permission issue etc
-		f_handler = logging.FileHandler(fallback_logfilename, mode='w', encoding='utf-8')
-		logfilename = fallback_logfilename
+def createLogfile(logfilename, fallback_logfilename):
+    global logger
+    filehandler = None
+    for handler in logger.handlers:
+        if handler.__class__.__name__ == "FileHandler":
+            filehandler = handler
+            break  # There is only ever one
 
-	f_format = logging.Formatter('%(message)s')
-	f_handler.setFormatter(f_format)
-	logger.addHandler(f_handler)
-	logger.info(f'Log file created at:\n{logfilename}')
+    if filehandler is not None:  # Get rid of it
+        filehandler.flush()
+        filehandler.close()
+        logger.removeHandler(filehandler)
+    try:
+        f_handler = logging.FileHandler(logfilename, mode='w', encoding='utf-8')
+    except Exception:  # Could be permission issue etc
+        f_handler = logging.FileHandler(fallback_logfilename, mode='w', encoding='utf-8')
+        logfilename = fallback_logfilename
+
+    f_format = logging.Formatter('%(message)s')
+    f_handler.setFormatter(f_format)
+    logger.addHandler(f_handler)
+    logger.info(f'Log file created at:\n{logfilename}')
+
 
 def validateParams():
-	parser = argparse.ArgumentParser(
-		description='pipInstall2')
-	# Environment
-	parser.add_argument('-m', type=str, nargs=1, default=[None],
-						help='manifest file')
-	parser.add_argument('-p', type=str, nargs=1, default=[None], help='plugin path')
+    parser = argparse.ArgumentParser(
+        description='pipInstall2')
+    # Environment
+    parser.add_argument('-m', type=str, nargs=1, default=[None],
+                        help='manifest file')
+    parser.add_argument('-p', type=str, nargs=1, default=[None], help='plugin path')
 
-	args = vars(parser.parse_args())  # Save as a dict
+    args = vars(parser.parse_args())  # Save as a dict
 
-	mFile = args['m'][0]
-	pPath = args['p'][0]
+    mFile = args['m'][0]
+    pPath = args['p'][0]
 
-	if mFile is None:
-		print('Exiting: No manifest file (-m) was provided')
-		shutDown(ExitCodes.NO_MANIFEST_PROVIDED)
-	elif not os.path.isfile(mFile):
-		print(f'Exiting: Manifest file "{mFile}" does not exist')
-		shutDown(ExitCodes.MANIFEST_DOES_NOT_EXIST)
+    if mFile is None:
+        print('Exiting: No manifest file (-m) was provided')
+        shutDown(ExitCodes.NO_MANIFEST_PROVIDED)
+    elif not os.path.isfile(mFile):
+        print(f'Exiting: Manifest file "{mFile}" does not exist')
+        shutDown(ExitCodes.MANIFEST_DOES_NOT_EXIST)
 
-	if pPath is None:
-		print('Exiting: No plugin path (-p) was provided')
-		shutDown(ExitCodes.NO_PLUGIN_PROVIDED)
-	elif not os.path.isdir(pPath):
-		print(f'Exiting: Plugin path "{pPath}" does not exist')
-		shutDown(ExitCodes.PLUGIN_DOES_NOT_EXIST)
+    if pPath is None:
+        print('Exiting: No plugin path (-p) was provided')
+        shutDown(ExitCodes.NO_PLUGIN_PROVIDED)
+    elif not os.path.isdir(pPath):
+        print(f'Exiting: Plugin path "{pPath}" does not exist')
+        shutDown(ExitCodes.PLUGIN_DOES_NOT_EXIST)
 
-	return mFile, pPath
+    return mFile, pPath
 
 
 def parseVersion(request) -> Dependency:
-	# Get the module name and any conditional and version
-	
-	dep = Dependency.parse(request)
+    # Get the module name and any conditional and version
 
-	if dep is None:
-		shutDown(ExitCodes.INVALID_DEPENDENCY)
-	
-	logger.debug(f'Parsed dependency: package="{dep.package}", comparator="{dep.comparator}"')
+    dep = Dependency.parse(request)
 
-	if dep.comparator is None or dep.comparator == '':
-		dep.comparator = 'None'
-		dep.version = ''
+    if dep is None:
+        shutDown(ExitCodes.INVALID_DEPENDENCY)
 
-	return dep.package, dep.comparator ,dep.version
+
+    if dep.comparator is None or dep.comparator == '':
+        dep.comparator = 'None'
+        dep.version = ''
+
+    return dep.package, dep.comparator, dep.version
 
 
 def runsubprocess(cmd):
-	try:
-		result = subprocess.run(cmd, capture_output=True, text=True, check=True, shell=True)
-		if result.returncode != 0:
-			if str(result.stderr) != '' and 'Error' in str(result.stderr):
-				logger.info(f'Possible install failure: {cmd}')
-				logger.info(f'Error = {result.stderr}')
-				logger.info(f'Output = {result.stdout}')
-				return False
-		return result.stdout
-	except subprocess.CalledProcessError as e1:
-		logger.debug(f'ProcessError -- \n{e1}')
-	except OSError as e2:
-		logger.info(f'OSError -- \n{e2}')
-	return False
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, shell=True)
+        if result.returncode != 0:
+            if str(result.stderr) != '' and 'Error' in str(result.stderr):
+                logger.info(f'Possible install failure: {cmd}')
+                logger.info(f'Error = {result.stderr}')
+                logger.info(f'Output = {result.stdout}')
+                return False
+        return result.stdout
+    except subprocess.CalledProcessError as e1:
+        logger.debug(f'ProcessError -- \n{e1}')
+    except OSError as e2:
+        logger.info(f'OSError -- \n{e2}')
+    return False
 
 
 def createPythonEnv(envPath):
-	"""
-	Uses --clear so no need to check pythonFile existence
-	pythonFile = os.path.normpath(os.path.join(envPath, BIN_DIR, PYTHON_VERSION))
-	if os.path.isfile(pythonFile):  # No need to recreate
-		return
-	"""
-	# Create a new virtual environment with updated pip
-	# PIP_NO_CACHE_DIR stops the pip run by --upgrade-deps from using the pip cache
-	cmd = f'PIP_NO_CACHE_DIR=1 {PYTHON_VERSION} -m venv {envPath} --clear --system-site-packages --upgrade-deps'
-	logger.info(f'Creating Python Virtual Environment at:\n{envPath}')
-	result = runsubprocess(cmd)
-	if result != '':
-		logger.critical(f'Problem creating Virtual Environment\n{result}')
-		shutDown(ExitCodes.PROBLEM_CREATING_VENV)
-	return
+    """
+    Uses --clear so no need to check pythonFile existence
+    pythonFile = os.path.normpath(os.path.join(envPath, BIN_DIR, PYTHON_VERSION))
+    if os.path.isfile(pythonFile):  # No need to recreate
+        return
+    """
+    # Create a new virtual environment with updated pip
+    # PIP_NO_CACHE_DIR stops the pip run by --upgrade-deps from using the pip cache
+    cmd = f'PIP_NO_CACHE_DIR=1 {PYTHON_VERSION} -m venv {envPath} --clear --system-site-packages --upgrade-deps'
+    logger.info(f'Creating Python Virtual Environment at:\n{envPath}')
+    result = runsubprocess(cmd)
+    if result != '':
+        logger.critical(f'Problem creating Virtual Environment\n{result}')
+        shutDown(ExitCodes.PROBLEM_CREATING_VENV)
+    return
 
 
 def importPackaging():
-	try:
-		import packaging.requirements, packaging.markers, packaging.specifiers
-		return True, ''
-	except ImportError as e:
-		return False, str(e)
+    try:
+        import packaging.requirements
+        import packaging.markers
+        import packaging.specifiers
+        return True, ''
+    except ImportError as e:
+        return False, str(e)
+
 
 def checkPackaging(pythonFile, sitePath):
-	"""
-	packaging is used to parse modules, markers and version conditions
-	If it is not available in the system python, install it into the venv
-	and add the venv site-packages to the end of this program's sys.path
-	"""
-	ok, err = importPackaging()
-	if ok:
-		return
-	logger.info(f'The python "packaging" module is not available ({err}) - installing it into the venv')
-	# --ignore-installed so a copy is put in the venv even if the venv can see another one
-	cmd = f'{pythonFile} -m {PIP} install --ignore-installed packaging {PIPNOCACHE} {pipQuiet}'
-	installed, out, perr = runPip(cmd)
-	if installed:
-		if sitePath not in sys.path:
-			sys.path.append(sitePath)
-		importlib.invalidate_caches()
-		ok, err = importPackaging()
-	else:
-		err = pipErrors(perr)
-	if not ok:
-		logger.critical(f'The python "packaging" module is required but could not be installed or imported:\n{err}\n'
-				  f'Install it e.g. sudo apt install python3-packaging')
-		shutDown(ExitCodes.PACKAGING_NOT_AVAILABLE)
-	logger.info('packaging installed in the venv and will be used from there')
+    """
+    packaging is used to parse modules, markers and version conditions
+    If it is not available in the system python, install it into the venv
+    and add the venv site-packages to the end of this program's sys.path
+    """
+    ok, err = importPackaging()
+    if ok:
+        return
+    logger.info(f'The python "packaging" module is not available ({err}) - installing it into the venv')
+    # --ignore-installed so a copy is put in the venv even if the venv can see another one
+    cmd = f'{pythonFile} -m {PIP} install --ignore-installed packaging {PIPNOCACHE} {pipQuiet}'
+    installed, out, perr = runPip(cmd)
+    if installed:
+        if sitePath not in sys.path:
+            sys.path.append(sitePath)
+        importlib.invalidate_caches()
+        ok, err = importPackaging()
+    else:
+        err = pipErrors(perr)
+    if not ok:
+        logger.critical(f'The python "packaging" module is required but could not be installed or imported:\n{err}\n'
+                        f'Install it e.g. sudo apt install python3-packaging')
+        shutDown(ExitCodes.PACKAGING_NOT_AVAILABLE)
+    logger.info('packaging installed in the venv and will be used from there')
+
 
 def getModuleList(mFile):
-	with open(mFile) as jsonfile:
-		try:
-			config = json.load(jsonfile)
-		except ValueError as e:
-			logger.critical(f'"{mFile}" is not a properly formatted json file\n{e}')
-			shutDown(ExitCodes.MANIFEST_ERROR)
+    with open(mFile) as jsonfile:
+        try:
+            config = json.load(jsonfile)
+        except ValueError as e:
+            logger.critical(f'"{mFile}" is not a properly formatted json file\n{e}')
+            shutDown(ExitCodes.MANIFEST_ERROR)
 
-	mList = config[MANIFEST_KEY]
-	pluginname = config[NAME_KEY]
+    mList = config[MANIFEST_KEY]
+    pluginname = config[NAME_KEY]
 
-	return mList, pluginname
+    return mList, pluginname
+
 
 def stripComment(entry):
-	# Remove trailing comment (pip rule: '#' at start or preceded by whitespace)
-	return COMMENT_RE.sub('', entry).strip()
+    # Remove trailing comment (pip rule: '#' at start or preceded by whitespace)
+    return COMMENT_RE.sub('', entry).strip()
+
 
 def combineRequirements(moduleList, pluginPath):
-	"""
-	Concatenate the sbcPythonDependencies entries and the lines of any requirements files (.txt)
-	into one list. Comments and blank lines are removed.
-	--verbose may appear anywhere (manifest or requirements file) - it is removed and reported
-	--python<condition> (e.g. --python>=3.11) may appear anywhere - removed, conditions are combined
-	Returns (lines, verbose, pythonConditions) - pythonConditions is a list, one item per --python entry
-	"""
-	lines = []
-	for entry in moduleList:
-		entry = stripComment(entry)
-		if entry == '':
-			continue  # blank or comment-only entry
-		if re.search(r'\.txt\S+$', entry, flags=re.IGNORECASE):
-			# e.g. requirements.txt1 - a mistyped file name would otherwise be looked up on PyPI as a package
-			logger.critical(f'"{entry}" looks like a requirements file name but does not end in ".txt"\n'
-					'Requirements files in sbcPythonDependencies must end in ".txt"')
-			shutDown(ExitCodes.REQUIREMENTS_FILE_NOT_FOUND)
-		if entry.endswith('.txt'):
-			# It's a requirements file in <plugin path>/dsf
-			reqfile = os.path.normpath(os.path.join(pluginPath, 'dsf', entry))
-			if not os.path.isfile(reqfile):
-				logger.critical(f'Requirements file "{entry}" was not found at:\n{reqfile}')
-				shutDown(ExitCodes.REQUIREMENTS_FILE_NOT_FOUND)
-			logger.info(f'Reading requirements file: {reqfile}')
-			with open(reqfile, 'r') as f:
-				for line in f:
-					line = stripComment(line)
-					if line != '':
-						lines.append(line)
-		else:
-			lines.append(entry)
+    """
+    Concatenate the sbcPythonDependencies entries and the lines of any requirements files (.txt)
+    into one list. Comments and blank lines are removed.
+    --verbose may appear anywhere (manifest or requirements file) - it is removed and reported
+    --python<condition> (e.g. --python>=3.11) may appear anywhere - removed, conditions are combined
+    Returns (lines, verbose, pythonConditions) - pythonConditions is a list, one item per --python entry
+    """
+    lines = []
+    for entry in moduleList:
+        entry = stripComment(entry)
+        if entry == '':
+            continue  # blank or comment-only entry
+        if re.search(r'\.txt\S+$', entry, flags=re.IGNORECASE):
+            # e.g. requirements.txt1 - a mistyped file name would otherwise be looked up on PyPI as a package
+            logger.critical(f'"{entry}" looks like a requirements file name but does not end in ".txt"\n'
+                            'Requirements files in sbcPythonDependencies must end in ".txt"')
+            shutDown(ExitCodes.REQUIREMENTS_FILE_NOT_FOUND)
+        if entry.endswith('.txt'):
+            # It's a requirements file in <plugin path>/dsf
+            reqfile = os.path.normpath(os.path.join(pluginPath, 'dsf', entry))
+            if not os.path.isfile(reqfile):
+                logger.critical(f'Requirements file "{entry}" was not found at:\n{reqfile}')
+                shutDown(ExitCodes.REQUIREMENTS_FILE_NOT_FOUND)
+            logger.info(f'Reading requirements file: {reqfile}')
+            with open(reqfile, 'r') as f:
+                for line in f:
+                    line = stripComment(line)
+                    if line != '':
+                        lines.append(line)
+        else:
+            lines.append(entry)
 
-	verbose = '--verbose' in lines
-	lines = [line for line in lines if line != '--verbose']
+    verbose = '--verbose' in lines
+    lines = [line for line in lines if line != '--verbose']
 
-	pythonConditions = [line[len(PYTHONREQ):].strip() for line in lines if line.startswith(PYTHONREQ)]
-	lines = [line for line in lines if not line.startswith(PYTHONREQ)]
+    pythonConditions = [line[len(PYTHONREQ):].strip() for line in lines if line.startswith(PYTHONREQ)]
+    lines = [line for line in lines if not line.startswith(PYTHONREQ)]
 
-	return lines, verbose, pythonConditions
+    return lines, verbose, pythonConditions
+
 
 def checkPythonVersion(pythonConditions, pythonFile):
-	"""
-	Test the venv python against each --python condition (e.g. >=3.11) in turn and log the result of each
-	Stop if any condition cannot be understood (INVALID_DEPENDENCY) or is not met (PYTHON_VERSION_NOT_SUPPORTED)
-	Needs packaging - call after checkPackaging
-	"""
-	if not pythonConditions:
-		return
-	from packaging.specifiers import SpecifierSet, InvalidSpecifier
+    """
+    Test the venv python against each --python condition (e.g. >=3.11) in turn and log the result of each
+    Stop if any condition cannot be understood (INVALID_DEPENDENCY) or is not met (PYTHON_VERSION_NOT_SUPPORTED)
+    Needs packaging - call after checkPackaging
+    """
+    if not pythonConditions:
+        return
+    from packaging.specifiers import SpecifierSet, InvalidSpecifier
 
-	cmd = f'{pythonFile} -c "import platform; print(platform.python_version())"'
-	version = runsubprocess(cmd)
-	if version is False:
-		logger.critical('Could not get the python version of the venv')
-		shutDown(ExitCodes.UNEXPECTED_ERROR)
-	version = version.strip()
+    cmd = f'{pythonFile} -c "import platform; print(platform.python_version())"'
+    version = runsubprocess(cmd)
+    if version is False:
+        logger.critical('Could not get the python version of the venv')
+        shutDown(ExitCodes.UNEXPECTED_ERROR)
+    version = version.strip()
 
-	logger.info(f'\nChecking the plugin\'s Python version requirements (this system has Python {version}):')
-	invalid = False
-	failed = False
-	for condition in pythonConditions:
-		try:
-			spec = SpecifierSet(condition)
-			if len(spec) == 0:
-				raise InvalidSpecifier('no condition given')
-		except InvalidSpecifier as e:
-			logger.info(f'\t{PYTHONREQ}{condition} ==> Invalid - use e.g. {PYTHONREQ}>=3.11 ({e})')
-			invalid = True
-			continue
-		if spec.contains(version, prereleases=True):
-			logger.info(f'\t{PYTHONREQ}{condition} ==> Passed')
-		else:
-			logger.info(f'\t{PYTHONREQ}{condition} ==> Failed')
-			failed = True
+    logger.info(f'\nChecking the plugin\'s Python version requirements (this system has Python {version}):')
+    invalid = False
+    failed = False
+    for condition in pythonConditions:
+        try:
+            spec = SpecifierSet(condition)
+            if len(spec) == 0:
+                raise InvalidSpecifier('no condition given')
+        except InvalidSpecifier as e:
+            logger.info(f'\t{PYTHONREQ}{condition} ==> Invalid - use e.g. {PYTHONREQ}>=3.11 ({e})')
+            invalid = True
+            continue
+        if spec.contains(version, prereleases=True):
+            logger.info(f'\t{PYTHONREQ}{condition} ==> Passed')
+        else:
+            logger.info(f'\t{PYTHONREQ}{condition} ==> Failed')
+            failed = True
 
-	if invalid:
-		logger.critical('One or more --python conditions could not be understood. Nothing was installed')
-		shutDown(ExitCodes.INVALID_DEPENDENCY)
-	if failed:
-		logger.critical(f'Python {version} does not meet the plugin\'s Python version requirements. Nothing was installed')
-		shutDown(ExitCodes.PYTHON_VERSION_NOT_SUPPORTED)
+    if invalid:
+        logger.critical('One or more --python conditions could not be understood. Nothing was installed')
+        shutDown(ExitCodes.INVALID_DEPENDENCY)
+    if failed:
+        logger.critical(f'Python {version} does not meet the plugin\'s Python version requirements. Nothing was installed')
+        shutDown(ExitCodes.PYTHON_VERSION_NOT_SUPPORTED)
+
 
 def normaliseRequirement(line):
-	"""
-	Correct the syntax of one entry so it is a valid requirements file line e.g.
-		"numpy >= 1.2 , <2"          -> "numpy<2,>=1.2"
-		"--user dsf-python"          -> "dsf-python"  (with a warning)
-		"picamera2; sys_platform == 'linux'" -> "picamera2" on linux, dropped (None) elsewhere
-	git+ urls are passed through unchanged
-	An entry that cannot be corrected stops the install (INVALID_DEPENDENCY)
-	"""
-	from packaging.requirements import Requirement, InvalidRequirement
+    """
+    Correct the syntax of one entry so it is a valid requirements file line e.g.
+        "numpy >= 1.2 , <2"          -> "numpy<2,>=1.2"
+        "--user dsf-python"          -> "dsf-python"  (with a warning)
+        "picamera2; sys_platform == 'linux'" -> "picamera2" on linux, dropped (None) elsewhere
+    git+ urls are passed through unchanged
+    An entry that cannot be corrected stops the install (INVALID_DEPENDENCY)
+    """
+    from packaging.requirements import Requirement, InvalidRequirement
 
-	text = line.strip()
+    text = line.strip()
 
-	if text.startswith('--user'):  # modules are always installed in the venv
-		text = text[len('--user'):].strip()
-		logger.warning(f'"--user" ignored for "{text}" - it will be installed in the plugin venv')
+    if text.startswith('--user'):  # modules are always installed in the venv
+        text = text[len('--user'):].strip()
+        logger.warning(f'"--user" ignored for "{text}" - it will be installed in the plugin venv')
 
-	if text.startswith('git+'):
-		return text
+    if text.startswith('git+'):
+        return text
 
-	try:
-		req = Requirement(text)
-	except InvalidRequirement as e:
-		logger.critical(f'Invalid entry "{line}"\n{e}')
-		shutDown(ExitCodes.INVALID_DEPENDENCY)
+    try:
+        req = Requirement(text)
+    except InvalidRequirement as e:
+        logger.critical(f'Invalid entry "{line}"\n{e}')
+        shutDown(ExitCodes.INVALID_DEPENDENCY)
 
-	if req.url:
-		logger.critical(f'Unsupported url form in "{line}" - use git+<url> instead')
-		shutDown(ExitCodes.INVALID_DEPENDENCY)
+    if req.url:
+        logger.critical(f'Unsupported url form in "{line}" - use git+<url> instead')
+        shutDown(ExitCodes.INVALID_DEPENDENCY)
 
-	if req.marker is not None:
-		try:
-			if not req.marker.evaluate():
-				logger.info(f'Skipping "{line}" - marker does not apply to this platform')
-				return None
-			logger.debug(f'Marker "{req.marker}" applies to "{line}"')
-		except Exception as e:
-			logger.warning(f'Could not evaluate marker in "{line}": {e} - installing it anyway')
+    if req.marker is not None:
+        try:
+            if not req.marker.evaluate():
+                logger.info(f'Skipping "{line}" - marker does not apply to this platform')
+                return None
+            logger.debug(f'Marker "{req.marker}" applies to "{line}"')
+        except Exception as e:
+            logger.warning(f'Could not evaluate marker in "{line}": {e} - installing it anyway')
 
-	extras = f'[{",".join(sorted(req.extras))}]' if req.extras else ''
-	return f'{req.name}{extras}{req.specifier}'
+    extras = f'[{",".join(sorted(req.extras))}]' if req.extras else ''
+    return f'{req.name}{extras}{req.specifier}'
+
 
 def normaliseRequirements(lines):
-	# Correct the syntax of every entry - the result is a virtual requirements file
-	result = []
-	for line in lines:
-		fixed = normaliseRequirement(line)
-		if fixed is None:
-			continue  # marker does not apply
-		if fixed != line:
-			logger.debug(f'"{line}" ==> "{fixed}"')
-		result.append(fixed)
-	return result
+    # Correct the syntax of every entry - the result is a virtual requirements file
+    result = []
+    for line in lines:
+        fixed = normaliseRequirement(line)
+        if fixed is None:
+            continue  # marker does not apply
+        if fixed != line:
+            logger.debug(f'"{line}" ==> "{fixed}"')
+        result.append(fixed)
+    return result
 
 
 def getFreezeList(pythonFile) -> str:
-	cmd = f'{pythonFile} -m {PIP} freeze --all {pipQuiet}' # Gives version prefixed by ==
-	request = runsubprocess(cmd)
-	if request is False:
-		logger.critical('Aborting: Failed to get pip list')
-		shutDown(ExitCodes.PIP_LIST_ERROR)
-	# Normalise to lower case and underscore because installation names can vary
-	# e.g. pyOpenSSL vs py_openssl could be installed by pyopenssl
-	
-	request = request.lower()
-	request = request.replace('-', '_')
+    cmd = f'{pythonFile} -m {PIP} freeze --all {pipQuiet}'  # Gives version prefixed by ==
+    request = runsubprocess(cmd)
+    if request is False:
+        logger.critical('Aborting: Failed to get pip list')
+        shutDown(ExitCodes.PIP_LIST_ERROR)
+    # Normalise to lower case and underscore because installation names can vary
+    # e.g. pyOpenSSL vs py_openssl could be installed by pyopenssl
 
-	return request
+    request = request.lower()
+    request = request.replace('-', '_')
+
+    return request
+
 
 def getModuleVersion(m, pythonFile, sitePath, freezeList):
-	# Remove any extras (stuff in square brackets)
-	regex = r'(\[(.*?)\])'
-	result = re.findall(regex, m, flags=re.IGNORECASE)
-	if result:
-		result = list(result[0])  # Convert tuple to list
-		m = m.replace(str(result[0]),'')
-	# SRS Swap import test with pip freeze test - makes more sense
+    # Remove any extras (stuff in square brackets)
+    regex = r'(\[(.*?)\])'
+    result = re.findall(regex, m, flags=re.IGNORECASE)
+    if result:
+        result = list(result[0])  # Convert tuple to list
+        m = m.replace(str(result[0]), '')
+    # SRS Swap import test with pip freeze test - makes more sense
 
-	#Also check if module is installed in pip
-	#Sometimes module cannot be imported with same name as pip package
-	underscore_m = m.replace('-','_')
-	freeze_m = underscore_m.lower() #  freezeList was normalized this way
+    # Also check if module is installed in pip
+    # Sometimes module cannot be imported with same name as pip package
+    underscore_m = m.replace('-', '_')
+    freeze_m = underscore_m.lower()  # freezeList was normalized this way
 
-	# Is the module already installed by PIP
-	regex = f'^{freeze_m}==(.+)$' # format used for freeze
-	result = re.findall(regex, freezeList, flags=re.MULTILINE)
+    # Is the module already installed by PIP
+    regex = f'^{freeze_m}==(.+)$'  # format used for freeze
+    result = re.findall(regex, freezeList, flags=re.MULTILINE)
 
-	if result:  # The module exists
-		if result[0] != '':  # version number found
-			logger.debug(f'Pip: Version number "{result[0]}" was found for module "{m}"')
-			return result[0], modType.PIPWITHVERSION.value
-		else:
-			logger.debug(f'Pip: Module "{m}" exists but does not have a version number.')
-			return 'None', modType.PIPNOVERSION.value
-	else:
-		logger.debug(f'Pip: Module "{m}" was not found')
+    if result:  # The module exists
+        if result[0] != '':  # version number found
+            if normaliseName(m) in venvPackages(sitePath):
+                logger.debug(f'\tin pip\'s installed packages (venv): version {result[0]}')
+                return result[0], modType.PIPWITHVERSION.value
+            logger.debug(f'\tin pip\'s installed packages (system packages): version {result[0]}')
+            return result[0], modType.SYSTEMWITHVERSION.value
+        else:
+            logger.debug('\tin pip\'s installed packages, with no version number')
+            return 'None', modType.PIPNOVERSION.value
+    else:
+        logger.debug('\tnot in pip\'s installed packages')
 
-	# Check if module is a built-in
-	if (underscore_m in sys.builtin_module_names): # Returns compiled modules. Will miss some std modules
-		logger.debug(f'Module {m} is built-in')
-		return 'None', modType.BUILTIN.value
-			
-	cmd = f'{pythonFile} {sitePath}/{IMPORTTESTFILE} {underscore_m}'
-	request = runsubprocess(cmd)
+    # Check if module is a built-in
+    if (underscore_m in sys.builtin_module_names):  # Returns compiled modules. Will miss some std modules
+        logger.debug(f'\t{underscore_m} is built into Python')
+        return 'None', modType.BUILTIN.value
 
-	if not isinstance(request, str):
-		logger.info(f'Unexpected type for import test result: {type(request)}')
-		logger.info(f'Import test result for module "{m}" was ==> \n{request}')
-	else:
-		lines = request.splitlines()
-		last_line = lines[-1] # Get last line only
-		last_line = last_line.split(',')#comma separated values as list
-		result = last_line[0].strip()
-		resultType = last_line[1].strip()
-		
-		#Check if module can be imported (i.e. is installed)
-		if  resultType == 'INSTALLEDWITHVERSION':
-			logger.debug(f'Import: {m} imported with version {result}')
-			return result, modType.INSTALLEDWITHVERSION.value
-		elif resultType == 'INSTALLEDNOVERSION':
-			logger.debug(f'Import: {m} imported (no version info)')
-			return 'Installed', modType.INSTALLEDNOVERSION.value
-		elif resultType == 'NOTINSTALLED':
-			logger.debug(f'Import: {m} could not be imported because {result}')
-	
-	return 'None', modType.NOTINSTALLED.value
+    cmd = f'{pythonFile} {sitePath}/{IMPORTTESTFILE} {underscore_m}'
+    request = runsubprocess(cmd)
+
+    if not isinstance(request, str):
+        logger.info(f'Unexpected type for import test result: {type(request)}')
+        logger.info(f'Import test result for module "{m}" was ==> \n{request}')
+    else:
+        lines = request.splitlines()
+        last_line = lines[-1]  # Get last line only
+        last_line = last_line.split(',')  # comma separated values as list
+        result = last_line[0].strip()
+        resultType = last_line[1].strip()
+
+        # Check if module can be imported (i.e. is installed)
+        if resultType == 'INSTALLEDWITHVERSION':
+            logger.debug(f'\timportable as {underscore_m}: version {result}')
+            return result, modType.INSTALLEDWITHVERSION.value
+        elif resultType == 'INSTALLEDNOVERSION':
+            logger.debug(f'\timportable as {underscore_m} (no version number)')
+            return 'Installed', modType.INSTALLEDNOVERSION.value
+        elif resultType == 'NOTINSTALLED':
+            reason = '' if result == 'Module not able to be imported' else f' - {result}'
+            logger.debug(f'\tnot importable as {underscore_m}{reason} (a package\'s import name can differ, e.g. cv2)')
+
+    return 'None', modType.NOTINSTALLED.value
 
 
 def purgePipCache(pythonFile):
-	"""
-	Remove everything from the pip cache of the user running this program
-	(pip cache dir is per user e.g. ~/.cache/pip - not part of the venv).
-	Not fatal: under DSF (user dsf, home /) the cache is not writable so pip has it disabled
-	"""
-	cmd = f'{pythonFile} -m {PIP} cache purge'
-	logger.debug(f'Running ==> {cmd}')
-	try:
-		result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-	except OSError as e:
-		logger.info(f'pip cache purge not run: {e}')
-		return
-	output = (result.stderr or result.stdout).strip()
-	if result.returncode == 0:
-		logger.info(f'pip cache purged: {result.stdout.strip()}')
-	elif 'cache is disabled' in output:
-		# Normal under DSF - the cache could not be used, so there is nothing to purge
-		logger.debug('pip cache is disabled - nothing to purge')
-	else:
-		logger.info(f'pip cache not purged: {output}')
+    """
+    Remove everything from the pip cache of the user running this program
+    (pip cache dir is per user e.g. ~/.cache/pip - not part of the venv).
+    Not fatal: under DSF (user dsf, home /) the cache is not writable so pip has it disabled
+    """
+    cmd = f'{pythonFile} -m {PIP} cache purge'
+    logger.debug(f'Running ==> {cmd}')
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+    except OSError as e:
+        logger.info(f'pip cache purge not run: {e}')
+        return
+    output = (result.stderr or result.stdout).strip()
+    if result.returncode == 0:
+        logger.info(f'pip cache purged: {result.stdout.strip()}')
+    elif 'cache is disabled' in output:
+        # Normal under DSF - the cache could not be used, so there is nothing to purge
+        logger.debug('pip cache is disabled - nothing to purge')
+    else:
+        logger.info(f'pip cache not purged: {output}')
+
 
 def runPip(cmd):
-	# Run a pip command without raising - returns (ok, stdout, stderr)
-	logger.debug(f'Running ==> {cmd}')
-	try:
-		result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-	except OSError as e:
-		return False, '', str(e)
-	return result.returncode == 0, result.stdout, result.stderr
+    # Run a pip command without raising - returns (ok, stdout, stderr)
+    logger.debug(f'Running ==> {cmd}')
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+    except OSError as e:
+        return False, '', str(e)
+    return result.returncode == 0, result.stdout, result.stderr
+
 
 def pipErrors(stderr):
-	# Just the ERROR lines from pip output (or everything if there are none)
-	lines = [line for line in stderr.splitlines() if line.startswith('ERROR')]
-	return '\n'.join(lines) if lines else stderr.strip()
+    # Just the ERROR lines from pip output (or everything if there are none)
+    # pip's "Ignored the following versions that require a different python version" line is only shown with --verbose
+    lines = [line for line in stderr.splitlines() if line.startswith('ERROR')]
+    if not logger.isEnabledFor(logging.DEBUG):
+        lines = [line for line in lines if not line.startswith('ERROR: Ignored the following')] or lines
+    return '\n'.join(lines) if lines else stderr.strip()
+
+
+def pipFailureReason(stderr):
+    # A short reason for the result summary - pip's last ERROR line
+    lines = [line for line in stderr.splitlines() if line.startswith('ERROR') and not line.startswith('ERROR: Ignored the following')]
+    if not lines:
+        return 'pip reported an error (see the log above)'
+    return lines[-1].replace('ERROR: ', '', 1).strip()
+
+
+def normaliseName(name):
+    # PEP 503 normalised package name, without extras e.g. Foo_Bar[x] -> foo-bar
+    return re.sub(r'[-_.]+', '-', name.split('[')[0].strip()).lower()
+
+
+def venvPackages(sitePath):
+    # Normalised names of the packages installed in the venv itself (not the system packages it can see)
+    names = set()
+    try:
+        for entry in os.listdir(sitePath):
+            if entry.endswith('.dist-info'):
+                names.add(normaliseName(entry[:-len('.dist-info')].rsplit('-', 1)[0]))
+    except OSError:
+        pass
+    return names
+
 
 def requestString(mod, comp, val):
-	return mod if comp == 'None' else f'{mod}{comp}{val}'
+    return mod if comp == 'None' else f'{mod}{comp}{val}'
 
-def installModule(mod, comp, val, pythonFile):
-	request = requestString(mod, comp, val)
 
-	logger.info(f'\nAttempting install of: {request}\n')
+def installModule(mod, comp, val, pythonFile, venvPath):
+    # Returns (ok, reason) - reason is a short explanation when the install fails
+    request = requestString(mod, comp, val)
 
-	cmd = f'{pythonFile} -m {PIP} install "{request}" {PIPNOCACHE} {pipQuiet}'
-	ok, out, err = runPip(cmd)
+    logger.info(f'\nAttempting install of: {request}\n')
 
-	if not ok:  # module could not be installed
-		logger.info(f'Module: {request} could not be installed\n{pipErrors(err)}')
-		return False
-	logger.debug(f'Result was ==> \n{out}')
-	return True
+    # Dry run of just this module so a slow build from source is reported before it starts
+    reportfile = os.path.normpath(os.path.join(venvPath, REPORTFILENAME))
+    cmd = f'{pythonFile} -m {PIP} install --dry-run --report "{reportfile}" "{request}" {PIPNOCACHE} {PIPPREFERBINARY} {pipQuiet}'
+    ok, out, err = runPip(cmd)
+    if ok:
+        logPlannedInstalls(reportfile, pythonFile)
+
+    cmd = f'{pythonFile} -m {PIP} install "{request}" {PIPNOCACHE} {PIPPREFERBINARY} {pipQuiet}'
+    ok, out, err = runPip(cmd)
+
+    if not ok:  # module could not be installed
+        logger.info(f'Module: {request} could not be installed\n{pipErrors(err)}')
+        return False, pipFailureReason(err)
+    logger.debug(f'Result was ==> \n{out}')
+    return True, ''
+
+
+def checkBuildTools(pythonFile):
+    """
+    Check for the basic tools that almost every source build needs and log any that are missing
+    Packages may need other tools or libraries as well - these are not declared in a way that can be checked
+    Only reports - the install carries on either way
+    Only checked once per run
+    """
+    global buildToolsChecked
+    if buildToolsChecked:
+        return
+    buildToolsChecked = True
+
+    # The include folder of the venv's python is where Python.h should be
+    ok, out, err = runPip(f'{pythonFile} -c "import sysconfig; print(sysconfig.get_paths()[\'include\'])"')
+    pythonHeader = os.path.join(out.strip(), 'Python.h') if ok and out.strip() else ''
+
+    # (description, found, apt package that provides it)
+    checks = [
+        ('C compiler (cc / gcc)', shutil.which('cc') or shutil.which('gcc'), 'build-essential'),
+        ('C++ compiler (c++ / g++)', shutil.which('c++') or shutil.which('g++'), 'build-essential'),
+        ('Python headers (Python.h)', pythonHeader and os.path.isfile(pythonHeader), 'python3-dev'),
+        ('pkg-config', shutil.which('pkg-config'), 'pkg-config'),
+    ]
+
+    logger.info('Checking the basic build tools:')
+    missing = []
+    for description, found, aptPackage in checks:
+        logger.info(f'\t{description} ==> {"Found" if found else "Missing"}')
+        if not found and aptPackage not in missing:
+            missing.append(aptPackage)
+    if missing:
+        logger.info(f'Missing build tools can be installed with: sudo apt install {" ".join(missing)}')
+    logger.info('Some packages also need other tools or libraries - see the package\'s install documentation.')
+
 
 def dryRun(requests, pythonFile, venvPath):
-	"""
-	Write the requests to a requirements file and ask pip what it would install
-	Logs the planned installs (requested modules and their dependencies)
-	Returns (ok, reqfile)
-	"""
-	reqfile = os.path.normpath(os.path.join(venvPath, REQFILENAME))
-	reportfile = os.path.normpath(os.path.join(venvPath, REPORTFILENAME))
-	with open(reqfile, 'w') as f:
-		f.write('\n'.join(requests) + '\n')
-	logger.debug(f'Requirements written to {reqfile}:\n' + '\n'.join(requests))
+    """
+    Write the requests to a requirements file and ask pip what it would install
+    Logs the planned installs (requested modules and their dependencies)
+    Returns (ok, reqfile)
+    """
+    reqfile = os.path.normpath(os.path.join(venvPath, REQFILENAME))
+    reportfile = os.path.normpath(os.path.join(venvPath, REPORTFILENAME))
+    with open(reqfile, 'w') as f:
+        f.write('\n'.join(requests) + '\n')
+    logger.debug(f'Requirements written to {reqfile}:\n' + '\n'.join(requests))
 
-	cmd = f'{pythonFile} -m {PIP} install --dry-run --report "{reportfile}" -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
-	ok, out, err = runPip(cmd)
-	if not ok:
-		logger.info(f'Dry run failed - pip could not resolve the requested modules together:\n{pipErrors(err)}')
-		return False, reqfile
+    cmd = f'{pythonFile} -m {PIP} install --dry-run --report "{reportfile}" -r "{reqfile}" {PIPNOCACHE} {PIPPREFERBINARY} {pipQuiet}'
+    ok, out, err = runPip(cmd)
+    if not ok:
+        logger.info(f'Dry run failed - pip could not resolve the requested modules together:\n{pipErrors(err)}')
+        return False, reqfile
 
-	try:
-		with open(reportfile) as f:
-			items = json.load(f).get('install', [])
-	except (OSError, ValueError) as e:
-		logger.info(f'Dry run succeeded but the report could not be read: {e}')
-		return True, reqfile
+    logPlannedInstalls(reportfile, pythonFile)
+    logger.debug(f'Full dry run report: {reportfile}')
+    return True, reqfile
 
-	if not items:
-		logger.info('Dry run: nothing needs to be installed - all requirements are already satisfied')
-	else:
-		logger.info('Dry run: pip will install the following:')
-		for item in sorted(items, key=lambda x: (not x.get('requested', False), x.get('metadata', {}).get('name', '').lower())):
-			md = item.get('metadata', {})
-			kind = 'requested' if item.get('requested') else 'dependency'
-			logger.info(f'\t{md.get("name", "?")}=={md.get("version", "?")}  ({kind})')
-	logger.debug(f'Full dry run report: {reportfile}')
-	return True, reqfile
+
+def logPlannedInstalls(reportfile, pythonFile):
+    """
+    Log what a pip --dry-run report says will be installed
+    Modules that will be built from source are marked, followed by a warning and a check of the build tools
+    """
+    try:
+        with open(reportfile) as f:
+            items = json.load(f).get('install', [])
+    except (OSError, ValueError) as e:
+        logger.info(f'Dry run succeeded but the report could not be read: {e}')
+        return
+
+    if not items:
+        logger.info('Dry run: nothing needs to be installed - all requirements are already satisfied')
+    else:
+        logger.info('Dry run: pip will install the following:')
+        builds = []
+        for item in sorted(items, key=lambda x: (not x.get('requested', False), x.get('metadata', {}).get('name', '').lower())):
+            md = item.get('metadata', {})
+            kind = 'requested' if item.get('requested') else 'dependency'
+            name = f'{md.get("name", "?")}=={md.get("version", "?")}'
+            # A download that is not a wheel (.whl) is source code (or a git repository) that pip has to build
+            url = item.get('download_info', {}).get('url', '')
+            if url and not url.lower().endswith('.whl'):
+                builds.append(name)
+                kind += ', will be built from source'
+            logger.info(f'\t{name}  ({kind})')
+        if builds:
+            logger.info('\nThese modules have no ready-built wheel for this system and will be built from source:')
+            for name in builds:
+                logger.info(f'\t{name}')
+            logger.info('Building can take a long time (sometimes tens of minutes on a Pi).')
+            checkBuildTools(pythonFile)
+
 
 def installRequirements(reqfile, pythonFile):
-	# Install everything with a single pip call so pip resolves all modules together
-	cmd = f'{pythonFile} -m {PIP} install -r "{reqfile}" {PIPNOCACHE} {pipQuiet}'
-	ok, out, err = runPip(cmd)
-	if not ok:
-		logger.info(f'Combined install failed:\n{pipErrors(err)}')
-	else:
-		logger.debug(f'Result was ==> \n{out}')
-	return ok
+    # Install everything with a single pip call so pip resolves all modules together
+    cmd = f'{pythonFile} -m {PIP} install -r "{reqfile}" {PIPNOCACHE} {PIPPREFERBINARY} {pipQuiet}'
+    ok, out, err = runPip(cmd)
+    if not ok:
+        logger.info(f'Combined install failed:\n{pipErrors(err)}')
+    else:
+        logger.debug(f'Result was ==> \n{out}')
+    return ok
 
-def parseRequests(mList, pythonFile, sitePath,freezeList):
-	modulerequests = []
-	install_result, install_version = '', ''
-	for module in mList:
-		logger.debug(f'\nParsing request for module: {module}')
-		mod_name, requested_version_comp, requested_version_val = parseVersion(module)
-		current_version, current_type = getModuleVersion(mod_name, pythonFile, sitePath, freezeList)
-		modulerequests.append([mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version])
-	return modulerequests
+
+def parseRequests(mList, pythonFile, sitePath, freezeList):
+    modulerequests = []
+    install_result, install_version = '', ''
+    for module in mList:
+        mod_name, requested_version_comp, requested_version_val = parseVersion(module)
+        condition = 'no version condition' if requested_version_comp == 'None' else f'condition {requested_version_comp}'
+        logger.debug(f'\nChecking {mod_name} ({condition}):')
+        current_version, current_type = getModuleVersion(mod_name, pythonFile, sitePath, freezeList)
+        logger.debug(f'\t==> {decide(requested_version_comp, current_version, current_type)[1]}')
+        modulerequests.append([mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version])
+    return modulerequests
+
 
 def versionSatisfies(current_version, current_type, condition):
-	# True if the installed version is known and meets the condition e.g. >=1.2,<2.0
-	if current_type not in (modType.PIPWITHVERSION.value, modType.INSTALLEDWITHVERSION.value):
-		return False
-	try:
-		from packaging.specifiers import SpecifierSet
-		ok = SpecifierSet(condition).contains(current_version, prereleases=True)
-	except Exception as e:
-		logger.debug(f'Could not compare version "{current_version}" with "{condition}": {e}')
-		return False
-	logger.debug(f'Installed version "{current_version}" {"meets" if ok else "does not meet"} "{condition}"')
-	return ok
+    # True if the installed version is known and meets the condition e.g. >=1.2,<2.0
+    if current_type not in (modType.PIPWITHVERSION.value, modType.SYSTEMWITHVERSION.value, modType.INSTALLEDWITHVERSION.value):
+        return False
+    try:
+        from packaging.specifiers import SpecifierSet
+        ok = SpecifierSet(condition).contains(current_version, prereleases=True)
+    except Exception as e:
+        logger.debug(f'Could not compare version "{current_version}" with "{condition}": {e}')
+        return False
+    return ok
+
+
+def decide(comp, current_version, current_type):
+    """
+    The rules for whether a module needs installing
+    Returns (install_result, explanation) - install_result is 'Builtin', 'Skipped' or '' (needs installing)
+    """
+    installedTypes = (modType.PIPWITHVERSION.value, modType.SYSTEMWITHVERSION.value, modType.PIPNOVERSION.value,
+                      modType.INSTALLEDWITHVERSION.value, modType.INSTALLEDNOVERSION.value)
+    if current_type == modType.BUILTIN.value:
+        return 'Builtin', 'built into Python - ignored'
+    if current_type in installedTypes and comp == 'None':
+        return 'Skipped', 'already available, no version condition - skipped'
+    if comp != 'None' and versionSatisfies(current_version, current_type, comp):
+        return 'Skipped', f'version {current_version} meets {comp} - skipped'
+    if current_type in installedTypes:
+        if current_version in ('None', 'Installed'):
+            return '', f'version unknown, so {comp} cannot be checked - will be installed'
+        return '', f'version {current_version} does not meet {comp} - will be installed'
+    return '', 'not installed - will be installed'
+
 
 def selectRequests(modulerequests):
-	# Apply the rules - mark Builtin / Skipped and return the indices that need installing
-	installedTypes = (modType.PIPWITHVERSION.value, modType.PIPNOVERSION.value,
-				   modType.INSTALLEDWITHVERSION.value, modType.INSTALLEDNOVERSION.value)
-	toInstall = []
-	for idx, request in enumerate(modulerequests):
-		mod_name, requested_version_comp, requested_version_val,\
-		current_version, current_type, install_result, install_version \
-		= unpackRequestList(request)
+    # Apply the rules - mark Builtin / Skipped and return the indices that need installing
+    toInstall = []
+    for idx, request in enumerate(modulerequests):
+        mod_name, requested_version_comp, requested_version_val, \
+            current_version, current_type, install_result, install_version \
+            = unpackRequestList(request)
 
-		if current_type == modType.BUILTIN.value:
-			install_result = 'Builtin'
-		elif current_type in installedTypes and requested_version_comp == 'None':
-			install_result = 'Skipped'
-		elif requested_version_comp != 'None' and versionSatisfies(current_version, current_type, requested_version_comp):
-			install_result = 'Skipped'
-		else:
-			toInstall.append(idx)
+        install_result = decide(requested_version_comp, current_version, current_type)[0]
+        if not install_result:
+            toInstall.append(idx)
 
-		modulerequests[idx] = [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
-	return toInstall
+        modulerequests[idx] = [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
+    return toInstall
+
 
 def setResult(modulerequests, idx, install_result):
-	modulerequests[idx][5] = install_result
+    modulerequests[idx][5] = install_result
+
 
 def processRequests(modulerequests, pythonFile, venvPath):
-	"""
-	1) Apply the rules to decide what needs installing
-	2) pip --dry-run of everything together - logs what will actually be installed
-	3) single pip install -r of everything together
-	4) if 2) or 3) fails, install one module at a time so the others still get installed
-	"""
-	together = selectRequests(modulerequests)
-	if not together:
-		return modulerequests
+    """
+    1) Apply the rules to decide what needs installing
+    2) pip --dry-run of everything together - logs what will actually be installed
+    3) single pip install -r of everything together
+    4) if 2) or 3) fails, install one module at a time so the others still get installed
+    """
+    together = selectRequests(modulerequests)
+    if not together:
+        return modulerequests
 
-	requests = [requestString(*modulerequests[i][0:3]) for i in together]
-	logger.info('\n\nChecking what pip will install (dry run):')
-	ok, reqfile = dryRun(requests, pythonFile, venvPath)
-	if ok:
-		logger.info('\nInstalling all modules together (single pip install -r):')
-		ok = installRequirements(reqfile, pythonFile)
-	if ok:
-		for i in together:
-			setResult(modulerequests, i, 'Succeeded')
-		return modulerequests
+    requests = [requestString(*modulerequests[i][0:3]) for i in together]
+    logger.info('\n\nChecking what pip will install (dry run):')
+    ok, reqfile = dryRun(requests, pythonFile, venvPath)
+    if ok:
+        logger.info('\nInstalling all modules together (single pip install -r):')
+        ok = installRequirements(reqfile, pythonFile)
+    if ok:
+        for i in together:
+            setResult(modulerequests, i, 'Succeeded')
+        return modulerequests
 
-	logger.info('\nFalling back to installing modules one at a time')
-	for i in sorted(together):
-		mod_name, comp, val = modulerequests[i][0:3]
-		if installModule(mod_name, comp, val, pythonFile):
-			setResult(modulerequests, i, 'Succeeded')
-		else:
-			setResult(modulerequests, i, 'Failed')
+    logger.info('\nFalling back to installing modules one at a time')
+    for i in sorted(together):
+        mod_name, comp, val = modulerequests[i][0:3]
+        ok, reason = installModule(mod_name, comp, val, pythonFile, venvPath)
+        if ok:
+            setResult(modulerequests, i, 'Succeeded')
+        else:
+            setResult(modulerequests, i, 'Failed')
+            modulerequests[i][6] = reason  # install_version holds the reason for a failed module
 
-	return modulerequests
+    return modulerequests
+
+
+def checkConflicts(modulerequests, pythonFile, sitePath):
+    """
+    pip check - find installed packages whose requirements are not met
+    Only problems that involve the plugin are returned:
+    - a package the plugin requested, or one installed in the venv (the plugin's dependencies), has an unmet requirement
+    - a system package needs a different version of a package that was installed in the venv
+    Problems that are only between system packages are logged with --verbose but ignored
+    """
+    venvNames = venvPackages(sitePath)
+    pluginNames = venvNames | {normaliseName(r[0]) for r in modulerequests if not r[0].startswith('git+')}
+
+    ok, out, err = runPip(f'{pythonFile} -m {PIP} check')
+    conflicts = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or line.startswith('No broken requirements'):
+            continue
+        owner = normaliseName(line.split(' ', 1)[0])
+        have = re.search(r'but you have (\S+) ', line)  # e.g. ... has requirement numpy>=2, but you have numpy 1.26.4.
+        if owner in pluginNames or (have and normaliseName(have.group(1)) in venvNames):
+            conflicts.append(line)
+        else:
+            logger.debug(f'pip check (system packages only - ignored): {line}')
+    return conflicts
+
 
 def unpackRequestList(request):
-	mod_name = request[0]
-	requested_version_comp = request[1]
-	requested_version_val = request[2]
-	current_version = request[3]
-	current_type = request[4]
-	install_result = request[5]
-	install_version = request[6]
-	return mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version
+    mod_name = request[0]
+    requested_version_comp = request[1]
+    requested_version_val = request[2]
+    current_version = request[3]
+    current_type = request[4]
+    install_result = request[5]
+    install_version = request[6]
+    return mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version
 
-def getUpdatedVersions(modulerequests,pythonFile, sitePath, freezeList):
-	for idx, request in enumerate(modulerequests):
-		mod_name, requested_version_comp, requested_version_val,\
-		current_version, current_type, install_result, install_version \
-		= unpackRequestList(request)
 
-		#Rules to determine if we need to install
-		if install_result == 'Succeeded':
-			install_version, _ = getModuleVersion(mod_name, pythonFile, sitePath, freezeList)
-		else:
-			install_version = 'None'
+def getUpdatedVersions(modulerequests, pythonFile, sitePath, freezeList):
+    for idx, request in enumerate(modulerequests):
+        mod_name, requested_version_comp, requested_version_val, \
+            current_version, current_type, install_result, install_version \
+            = unpackRequestList(request)
 
-		modulerequests[idx] = [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
+        # Rules to determine if we need to install
+        if install_result == 'Succeeded':
+            logger.debug(f'{mod_name}:')
+            install_version, _ = getModuleVersion(mod_name, pythonFile, sitePath, freezeList)
+        elif install_result != 'Failed':  # a failed module keeps its failure reason
+            install_version = 'None'
 
-	return modulerequests
+        modulerequests[idx] = [mod_name, requested_version_comp, requested_version_val, current_version, current_type, install_result, install_version]
+
+    return modulerequests
+
 
 def sortResults(modulerequests):
-	builtinList = []
-	skippedList = []
-	installedList = []
-	failedList = []
+    builtinList = []
+    skippedList = []
+    installedList = []
+    failedList = []
 
-	for req in modulerequests:
-		mod_name, requested_version_comp, requested_version_val,\
-		current_version, current_type, install_result, install_version \
-		= unpackRequestList(req)
+    for req in modulerequests:
+        mod_name, requested_version_comp, requested_version_val, \
+            current_version, current_type, install_result, install_version \
+            = unpackRequestList(req)
 
-		if install_result == 'Builtin':
-			builtinList.append(req)
-		elif install_result == 'Skipped':
-			skippedList.append(req)
-		elif install_result == 'Succeeded':
-			installedList.append(req)
-		else:
-			failedList.append(req)
-	
-	return builtinList, skippedList, installedList, failedList
+        if install_result == 'Builtin':
+            builtinList.append(req)
+        elif install_result == 'Skipped':
+            skippedList.append(req)
+        elif install_result == 'Succeeded':
+            installedList.append(req)
+        else:
+            failedList.append(req)
 
-def reportResults(builtinList, skippedList, installedList, failedList):
-	logger.info('---------------------------------------')
-	logger.info('Result Summary')
-	logger.info('---------------------------------------')
+    return builtinList, skippedList, installedList, failedList
 
-	if (len(builtinList) > 0):
-		logger.info('\nThese modules were Ignored (built-in):')
-		for req in builtinList:
-			mod_name, requested_version_comp, requested_version_val,\
-			current_version, current_type, install_result, install_version \
-			= unpackRequestList(req)
-			if requested_version_comp == 'None':
-				requested_version_comp = ''
-			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> Ignored')
 
-	if (len(skippedList) > 0):	
-		logger.info('\nThese modules were Skipped (Already installed - no version requested or version condition already met):')
-		for req in skippedList:
-			mod_name, requested_version_comp, requested_version_val,\
-			current_version, current_type, install_result, install_version \
-			= unpackRequestList(req)
-			if current_version == 'None':
-				current_version = ''
-			if requested_version_comp == 'None':
-				requested_version_comp = ''
-			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> {current_type} {current_version}')	
+def reportResults(builtinList, skippedList, installedList, failedList, conflicts):
+    logger.info('---------------------------------------')
+    logger.info('Result Summary')
+    logger.info('---------------------------------------')
 
-	if (len(installedList) > 0):
-		logger.info('\nThese modules were successfully installed / updated:')
-		for req in installedList:
-			mod_name, requested_version_comp, requested_version_val,\
-			current_version, current_type, install_result, install_version \
-			= unpackRequestList(req)
-			if requested_version_comp == 'None':
-				requested_version_comp = ''
-			if current_version == install_version:
-				install_version = f'Reinstalled with same version'
-			if current_version == 'None' or current_version == 'Installed':
-				current_version = ''
-			if install_version == 'None':	
-				install_version = 'no Version'
-			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}, now {install_version}')	
+    if (len(builtinList) > 0):
+        logger.info('\nThese modules were Ignored (built-in):')
+        for req in builtinList:
+            mod_name, requested_version_comp, requested_version_val, \
+                current_version, current_type, install_result, install_version \
+                = unpackRequestList(req)
+            if requested_version_comp == 'None':
+                requested_version_comp = ''
+            logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> Ignored')
 
-	if (len(failedList) > 0):
-		logger.info('\nThese modules failed to install / update:')
-		for req in failedList:		
-			mod_name, requested_version_comp, requested_version_val,\
-			current_version, current_type, install_result, install_version \
-			= unpackRequestList(req)
-			if requested_version_comp == 'None':
-				requested_version_comp = ''
-			if current_version == 'None':
-				current_version = ''
-			logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}')
+    if (len(skippedList) > 0):
+        logger.info('\nThese modules were Skipped (Already installed - no version requested or version condition already met):')
+        for req in skippedList:
+            mod_name, requested_version_comp, requested_version_val, \
+                current_version, current_type, install_result, install_version \
+                = unpackRequestList(req)
+            if current_version == 'None':
+                current_version = ''
+            if requested_version_comp == 'None':
+                requested_version_comp = ''
+            logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> {current_type} {current_version}')
+
+    if (len(installedList) > 0):
+        logger.info('\nThese modules were successfully installed / updated:')
+        for req in installedList:
+            mod_name, requested_version_comp, requested_version_val, \
+                current_version, current_type, install_result, install_version \
+                = unpackRequestList(req)
+            if requested_version_comp == 'None':
+                requested_version_comp = ''
+            if current_version == install_version:
+                install_version = f'Reinstalled with same version'
+            if current_version == 'None' or current_version == 'Installed':
+                current_version = ''
+            if install_version == 'None':
+                install_version = 'no Version'
+            logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> was {current_type} {current_version}, now {install_version}')
+
+    if (len(failedList) > 0):
+        logger.info('\nThese modules failed to install / update:')
+        for req in failedList:
+            mod_name, requested_version_comp, requested_version_val, \
+                current_version, current_type, install_result, install_version \
+                = unpackRequestList(req)
+            if requested_version_comp == 'None':
+                requested_version_comp = ''
+            reason = install_version if install_version not in ('', 'None') else 'pip reported an error (see the log above)'
+            logger.info(f'\t{mod_name}{requested_version_comp}{requested_version_val} ==> {reason}')
+            if current_type != modType.NOTINSTALLED.value:
+                before = current_type if current_version in ('None', 'Installed') else f'{current_type} {current_version}'
+                logger.info(f'\t\t(before the install it was {before})')
+
+    if conflicts:
+        logger.info('\nThese installed modules are not compatible with each other:')
+        for line in conflicts:
+            logger.info(f'\t{line}')
+
 
 def shutDown(code):
-	# logger does not exist yet if called while validating arguments
-	out = logger.info if 'logger' in globals() else print
-	out('---------------------------------------')
-	out(f'Exiting with code {code}')
-	out('---------------------------------------')
-	sys.exit(code.value)
+    # logger does not exist yet if called while validating arguments
+    out = logger.info if 'logger' in globals() else print
+    out('---------------------------------------')
+    out(f'Exiting with code {code}')
+    out('---------------------------------------')
+    sys.exit(code.value)
 
 
-#-------------------------------------------------------------------------------
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 def main(progName):
-	global pipQuiet
-	#  Validate calling arguments
-	manifestFile, pluginPath = validateParams()
-	venvPath = os.path.normpath(os.path.join(pluginPath, VENV_FOLDER))
-	pythonFile = os.path.normpath(os.path.join(venvPath, BIN_DIR, PYTHON_VERSION))
-	logfilename = os.path.normpath(os.path.join(venvPath, LOGNAME))
+    global pipQuiet
+    #  Validate calling arguments
+    manifestFile, pluginPath = validateParams()
+    venvPath = os.path.normpath(os.path.join(pluginPath, VENV_FOLDER))
+    pythonFile = os.path.normpath(os.path.join(venvPath, BIN_DIR, PYTHON_VERSION))
+    logfilename = os.path.normpath(os.path.join(venvPath, LOGNAME))
 
-	#  Set up consolelogging so journalc can be used
-	createLogger(progName)
-	logger.info('---------------------------------------------------')
-	logger.info(f'{progName} Version {THIS_VERSION} is attempting to install python modules')
+    #  Set up consolelogging so journalc can be used
+    createLogger(progName)
+    logger.info('---------------------------------------------------')
+    logger.info(f'{progName} Version {THIS_VERSION} is attempting to install python modules')
 
-	#  Create virtual environment
-	createPythonEnv(venvPath)
+    #  Create virtual environment
+    createPythonEnv(venvPath)
 
-	#add log file
-	createLogfile(logfilename, FALLBACK_LOGFILENAME)
-	
-	# Read the manifest file
-	moduleList, pluginName = getModuleList(manifestFile)
+    # add log file
+    createLogfile(logfilename, FALLBACK_LOGFILENAME)
 
-	logger.info(f'Plugin name is : {pluginName}')
+    # Read the manifest file
+    moduleList, pluginName = getModuleList(manifestFile)
 
-	# One list of the manifest entries and the contents of any requirements files
-	moduleList, verbose, pythonConditions = combineRequirements(moduleList, pluginPath)
+    logger.info(f'Plugin name is : {pluginName}')
 
-	#--verbose flag set adjust output level
-	if verbose:
-		logger.setLevel(logging.DEBUG)
-		pipQuiet = ''
-		logger.debug('--verbose found - debug logging on')
+    # One list of the manifest entries and the contents of any requirements files
+    moduleList, verbose, pythonConditions = combineRequirements(moduleList, pluginPath)
 
-	# Find the venv site-packages path (.pth hook currently disabled)
-	sitePath = createVenvFiles(pythonFile, venvPath)
+    # --verbose flag set adjust output level
+    if verbose:
+        logger.setLevel(logging.DEBUG)
+        pipQuiet = ''
+        logger.debug('--verbose found - debug logging on')
 
-	# python script to test if module is installed and get its version
-	createImportTestFile(sitePath)
+    # Find the venv site-packages path (.pth hook currently disabled)
+    sitePath = createVenvFiles(pythonFile, venvPath)
 
-	# packaging is needed to parse the module list - installed into the venv if missing
-	checkPackaging(pythonFile, sitePath)
+    # python script to test if module is installed and get its version
+    createImportTestFile(sitePath)
 
-	# Stop before installing anything if the python version does not meet --python
-	checkPythonVersion(pythonConditions, pythonFile)
+    # packaging is needed to parse the module list - installed into the venv if missing
+    checkPackaging(pythonFile, sitePath)
 
-	# Correct the syntax of every entry (drops entries whose platform marker does not apply)
-	moduleList = normaliseRequirements(moduleList)
-	logger.info('\nRequirements (manifest and requirements files combined):\n\t' + '\n\t'.join(moduleList))
+    # Stop before installing anything if the python version does not meet --python
+    checkPythonVersion(pythonConditions, pythonFile)
 
-	# Resolve the requested modules to a name and version
-	# Create a list of modules to instal and their current versions
-	moduleRequests = []
-	logger.info('\n\nChecking installed versions before install:')
-	freezeList = getFreezeList(pythonFile) # Get initial freeze list
-	moduleRequests = parseRequests(moduleList, pythonFile, sitePath,freezeList)
+    # Correct the syntax of every entry (drops entries whose platform marker does not apply)
+    moduleList = normaliseRequirements(moduleList)
+    logger.info('\nRequirements (manifest and requirements files combined):\n\t' + '\n\t'.join(moduleList))
 
-	# Process the requests and install modules as required
-	moduleRequests = processRequests(moduleRequests, pythonFile, venvPath)
+    # Resolve the requested modules to a name and version
+    # Create a list of modules to instal and their current versions
+    moduleRequests = []
+    logger.info('\n\nChecking installed versions before install:')
+    freezeList = getFreezeList(pythonFile)  # Get initial freeze list
+    moduleRequests = parseRequests(moduleList, pythonFile, sitePath, freezeList)
 
-	# Housekeeping - keep the pip cache from using SD card space
-	purgePipCache(pythonFile)
+    # Process the requests and install modules as required
+    moduleRequests = processRequests(moduleRequests, pythonFile, venvPath)
 
-	logger.info('\n\nChecking installed versions after install:')	
-	freezeList = getFreezeList(pythonFile)  # Get updated freeze list after parsing requests
-	moduleRequests = getUpdatedVersions(moduleRequests,pythonFile, sitePath,freezeList)	
+    # Housekeeping - keep the pip cache from using SD card space
+    purgePipCache(pythonFile)
 
+    logger.info('\n\nChecking installed versions after install:')
+    freezeList = getFreezeList(pythonFile)  # Get updated freeze list after parsing requests
+    moduleRequests = getUpdatedVersions(moduleRequests, pythonFile, sitePath, freezeList)
 
-	# Separate the results into lists for reporting
-	builtinList = []
-	skippedList = []
-	installedList = []
-	failedList = []
+    # Check the installed modules work together (pip check)
+    conflicts = checkConflicts(moduleRequests, pythonFile, sitePath)
 
-	builtinList,skippedList,installedList,failedList = sortResults(moduleRequests)	
+    # Separate the results into lists for reporting
+    builtinList = []
+    skippedList = []
+    installedList = []
+    failedList = []
 
+    builtinList, skippedList, installedList, failedList = sortResults(moduleRequests)
 
-	# Report the results
-	reportResults(builtinList, skippedList, installedList, failedList)
+    # Report the results
+    reportResults(builtinList, skippedList, installedList, failedList, conflicts)
 
-	if len(failedList) > 0:
-		logger.info('---------------------------------------')
-		logger.info('Some modules failed to install')
-		logger.info('---------------------------------------')
-		shutDown(ExitCodes.FAILED_TO_INSTALL_MODULE)
+    if len(failedList) > 0:
+        logger.info('---------------------------------------')
+        logger.info('Some modules failed to install')
+        logger.info('---------------------------------------')
+        shutDown(ExitCodes.FAILED_TO_INSTALL_MODULE)
 
-	logger.info('---------------------------------------')
-	logger.info('All modules were successfully installed')
-	logger.info('---------------------------------------')
-	shutDown(ExitCodes.SUCCESS)
+    if conflicts:
+        logger.info('---------------------------------------')
+        logger.info('The installed modules are not compatible with each other')
+        logger.info('---------------------------------------')
+        shutDown(ExitCodes.DEPENDENCY_CONFLICT)
 
-#-------------------------------------------------------------------------------
+    logger.info('---------------------------------------')
+    logger.info('All modules were successfully installed')
+    logger.info('---------------------------------------')
+    shutDown(ExitCodes.SUCCESS)
+
+# -------------------------------------------------------------------------------
+
 
 if __name__ == "__main__":  # Do not run anything below if the file is imported by another program
-	programName = os.path.basename(sys.argv[0])
-	main(programName)
+    programName = os.path.basename(sys.argv[0])
+    main(programName)
