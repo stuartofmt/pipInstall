@@ -1,11 +1,18 @@
-# pipInstall2 2.4 - change notes
+# pipInstall2 2.4.0 - change notes
 
 What changed since pipInstall2 2.1.0 ([2.1 documentation](../2.1/README.md)), newest first. The changes in versions 2.1.1 to 2.3.0 are included: they are part of 2.4. See [README.md](README.md) for what pipInstall2 does and how to use it.
 
-## Unreleased
+## Version 2.4.0 - Stuart Strolin
 
+- After installing, `pip check` is run. If the plugin's packages are not compatible with each other (e.g. one needs `numpy>=2` but `numpy<2` was installed), they are listed and pipInstall2 exits with the new exit code 16
+- When installing one module at a time, each module gets its own dry run first, so a build from source is reported (with the build tools check) before it starts
+- The result summary gives pip's reason for each failed module, e.g. `No matching distribution found for json==2.0.0`, instead of its state before the install
+- Packages that were already available are described as installed in the venv or found in the system packages, instead of "previously installed by Pip"
+- pip's "Ignored the following versions that require a different python version" lines are only shown with `--verbose`
 - An entry that looks like a mistyped requirements file name (e.g. `requirements.txt1`) now stops with exit code 13, instead of being looked up on PyPI as a package
 - When the pip cache is disabled (normal under DSF), the cache purge no longer logs pip's warning and error - it is logged at debug level only
+- pip is run with `--prefer-binary`, so a version with a ready-built wheel is chosen over building a newer version from source
+- The dry run log marks packages that will be built from source, with a warning that building can take a long time, and checks for the basic build tools (C and C++ compilers, Python headers, pkg-config), logging any that are missing with the `apt` command to install them
 
 ## Version 2.4.0-beta.2 - Stuart Strolin
 

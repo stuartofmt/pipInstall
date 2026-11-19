@@ -2,7 +2,7 @@
 
 pipInstall2 is a front-end for python pip that simplifies the installation of Python packages used with a DSF plugin.
 
-This is the documentation for pipInstall2 2.4 (in development), for DSF 3.6 and 3.7 ([other versions](../../Readme.md#versions)).
+This is the documentation for pipInstall2 2.4.0, for DSF 3.6 and 3.7 ([other versions](../../Readme.md#versions)).
 
 Each plugin gets its own Python virtual environment (venv), so packages for one plugin cannot break another plugin or the system Python.
 
@@ -121,13 +121,19 @@ Each package is checked against what is already available, including the system'
 
 ### 4. Install packages
 
-1. **Dry run.** pip is asked what it would install for all the packages together (`pip install --dry-run`). The log lists each package and version that will be installed, marked as `requested` or `dependency`.
+1. **Dry run.** pip is asked what it would install for all the packages together (`pip install --dry-run`). The log lists each package and version that will be installed, marked as `requested` or `dependency`. Packages that have no ready-built wheel for the system are marked `will be built from source`, and are listed again with a warning that building can take a long time. pipInstall2 then checks for the basic build tools (C and C++ compilers, Python headers, pkg-config), logs any that are missing and the `apt` command to install them. The install carries on either way. Some packages need other tools or libraries as well; these cannot be checked, so see the package's own install documentation.
 2. **Try to install everything together.** A single `pip install -r` tries to install all the packages at once, so pip chooses versions that work together.
-3. **Fall back to one at a time.** If the dry run or the combined install fails (e.g. one package does not exist), each package is then tried separately, so that the log shows which packages succeed and which fail, each failure with pip's error message. **If any package fails, the install as a whole fails** (exit code 10). The packages that did install are left in the venv, but the plugin's dependencies are incomplete. The venv is rebuilt from scratch the next time pipInstall2 runs.
+3. **Fall back to one at a time.** If the dry run or the combined install fails (e.g. one package does not exist), each package is then tried separately, so that the log shows which packages succeed and which fail, each failure with pip's error message. Before each package is installed, a dry run of just that package is made, so a package that will be built from source is reported (with the build tools check) before the build starts. **If any package fails, the install as a whole fails** (exit code 10). The packages that did install are left in the venv, but the plugin's dependencies are incomplete. The venv is rebuilt from scratch the next time pipInstall2 runs.
 
-### 5. Report
+pip is run with `--prefer-binary`: where the newest version that meets the condition is only available as source code, pip installs the newest version that has a ready-built wheel instead. Building from source on a Pi is slow and needs build tools (a C compiler, Python headers, and sometimes other libraries) that are often not installed. A package that has no wheel for any suitable version is still built from source.
 
-A summary lists the packages that were ignored, skipped, installed (with old and new versions) and failed. pipInstall2 then exits with one of the [exit codes](#exit-codes): 0 only if every package was installed or did not need installing, 10 if any package failed.
+### 5. Check the packages work together
+
+`pip check` is run to find installed packages whose own requirements are not met, e.g. a package that needs `numpy>=2` when `numpy<2` was requested. This matters most after the one-at-a-time fallback, where each package is installed without regard to the others. Only problems involving the plugin's packages count: packages it requested, packages installed in its venv, and system packages that need a different version of a package installed in the venv. Problems only between system packages are logged with `--verbose` and otherwise ignored.
+
+### 6. Report
+
+A summary lists the packages that were ignored, skipped, installed (with old and new versions) and failed (with pip's reason), followed by any packages that are not compatible with each other. Packages that were already available are shown as installed in the venv or found in the system packages. pipInstall2 then exits with one of the [exit codes](#exit-codes): 0 only if every package was installed or did not need installing and they work together, 10 if any package failed, 16 if the installed packages are not compatible with each other.
 
 ## Logging and files
 
@@ -197,3 +203,4 @@ Both paths should be fully qualified. DSF supplies these when it installs a plug
 | 13 | Requirements file not found in `<plugin path>/dsf`, or an entry looks like a mistyped requirements file name (e.g. `requirements.txt1`) |
 | 14 | The Python `packaging` module is not available and could not be installed into the venv |
 | 15 | The system's Python version does not meet the plugin's [`--python`](special_cases.md#requiring-a-python-version) condition |
+| 16 | The installed packages are not compatible with each other (found by `pip check`) |
