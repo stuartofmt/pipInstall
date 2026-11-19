@@ -2,7 +2,7 @@
 
 Newest first. See [readme.md](readme.md) for a description of what pipInstall2 does and how to use it.
 
-## Unreleased
+## Version 2.4.0 - Stuart Strolin
 
 - After installing, `pip check` is run. If the plugin's packages are not compatible with each other (e.g. one needs `numpy>=2` but `numpy<2` was installed), they are listed and pipInstall2 exits with the new exit code 16
 - When installing one module at a time, each module gets its own dry run first, so a build from source is reported (with the build tools check) before it starts
