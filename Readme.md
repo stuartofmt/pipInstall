@@ -17,7 +17,7 @@ Documentation for each version of pipInstall2 - usage, package descriptions, exi
 
 | pipInstall2 | For DWC / DSF | Documentation | Code |
 | --- | --- | --- | --- |
-| 2.4 | 3.6, 3.7 | [docs/2.4](docs/2.4/README.md) | Tag [v2.4.0](https://github.com/stuartofmt/pipInstall/tree/v2.4.0) |
+| 2.4 | 3.6, 3.7 | [docs/2.4](docs/2.4/README.md) | Tag [v2.4.1](https://github.com/stuartofmt/pipInstall/tree/v2.4.1) (pre-release), [v2.4.0](https://github.com/stuartofmt/pipInstall/tree/v2.4.0) |
 | 2.1 | 3.6, 3.7 | [docs/2.1](docs/2.1/README.md) | Tag [v2.1.0](https://github.com/stuartofmt/pipInstall/tree/v2.1.0/Version2) |
 
 pipInstall (Version 1, **no longer maintained**) does not work on operating systems that require Python packages to be installed in a virtual environment (venv), e.g. Debian Bookworm or later. Its documentation is in [docs/1](docs/1/README.md) and its code is in the [pipInstall](https://github.com/stuartofmt/pipInstall/tree/pipInstall) branch.

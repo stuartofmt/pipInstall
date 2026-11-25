@@ -4,6 +4,7 @@ Most plugins only need package names and version conditions, as described in [RE
 
 - [Special entries](#special-entries)
 - [Platform conditions (environment markers)](#platform-conditions-environment-markers)
+- [Package names and import names](#package-names-and-import-names)
 - [Installing from a git repository](#installing-from-a-git-repository)
 - [Requiring a Python version](#requiring-a-python-version)
 - [How entries are corrected](#how-entries-are-corrected)
@@ -17,8 +18,8 @@ These can be anywhere in `sbcPythonDependencies` or in a requirements file.
 | Entry | Meaning |
 | --- | --- |
 | `--verbose` | Turns on detailed logging, including pip's own output. |
+| `--clear` | Creates the venv from scratch instead of keeping the existing one, so every package is downloaded and installed again. Use it to get the latest versions of packages that have no version condition, or to start again if the venv is broken. Remove it afterwards, or every run starts from scratch. |
 | `--python<condition>` | The Python version the plugin needs, e.g. `--python>=3.11`. See [Requiring a Python version](#requiring-a-python-version). |
-| `--user name` | `--user` is ignored with a warning. The package is installed in the plugin's venv like any other. |
 
 ## Platform conditions (environment markers)
 
@@ -47,6 +48,33 @@ Common markers:
 
 Markers choose what to install. They do not enforce anything: to require a Python version use [`--python`](#requiring-a-python-version).
 
+## Package names and import names
+
+A package's name on PyPI (what pip installs) can differ from the name used to import it in Python:
+
+| PyPI package name | Import name |
+| --- | --- |
+| `opencv-python` | `cv2` |
+| `Pillow` | `PIL` |
+| `PyYAML` | `yaml` |
+| `pyserial` | `serial` |
+| `PyGObject` | `gi` |
+
+**Use the PyPI package name.** It is what pip installs, and pipInstall2 finds its version in pip's list of installed packages.
+
+If an entry is not in pip's list, pipInstall2 looks for a module with that name (without running it). If one is found:
+
+- with no version condition, it is treated as installed and skipped
+- with a version condition, pipInstall2 stops with exit code 11 before installing anything - unless the module's version is known (from the package that provides it) and already meets the condition, e.g. `serial>=3` with pyserial 3.5. Otherwise the entry would be sent to pip under the import name, and PyPI has unrelated packages with some of these names (e.g. `gi`, `serial`, `attr`), which would be installed in the venv and hide the real module. The log names the PyPI package to use where it is known:
+
+```text
+These entries are installed modules that pip does not know by that name (an import name, or a module installed with apt), so a version condition cannot be used with them:
+    gi>=3.40 (version unknown) - use the PyPI package name, or remove the condition
+    serial>=4 (version 3.5) - use the PyPI package name, e.g. pyserial>=4
+```
+
+The search is for modules that pip has no information about at all, usually from `apt`, e.g. `libcamera` (`python3-libcamera`) and `pykms` (`python3-kms++`), both used by picamera2. They can be listed, without a version condition, to state that the plugin needs them. They are not on PyPI, so if they are not installed the install fails (exit code 10) - install them with `apt`.
+
 ## Installing from a git repository
 
 ```text
@@ -55,6 +83,10 @@ git+https://github.com/x/y.git#egg=y
 ```
 
 The `#` in a git URL is not a comment because there is no space before it. Version conditions and markers cannot be used with git URLs. A git package is always installed, because its version cannot be checked beforehand.
+
+A git URL must start with `git+https://`, `git+ssh://` or `git+file://` (for a repository on the SBC itself), and can only contain letters, digits and `. _ ~ : / ? # [ ] @ ! & + , = % -`. A branch, tag or commit goes after `@`, e.g. `git+https://github.com/x/y.git@v1.2`. Any other git URL (e.g. one with a space, quote or `$`) stops the install with exit code 11. `git+http://` is not allowed because the download is not encrypted, so the code could be changed on the way.
+
+A URL for a private repository can include a user name and password or token, e.g. `git+https://user:token@github.com/x/y.git`. The password or token (also `git+https://token@github.com/...`) is shown as `***` in the log, but it is stored in plain text in plugin.json (or the requirements file), and in `pipInstall_requirements.txt` and `pipInstall_report.json` in the venv, which can only be read by the user that runs pipInstall2. `git+ssh://` with an SSH key for the `dsf` user avoids storing a password.
 
 ## Requiring a Python version
 
@@ -92,17 +124,38 @@ All entries from `sbcPythonDependencies` and requirements files are combined int
 | --- | --- |
 | `numpy >= 1.2 , < 3` | `numpy<3,>=1.2` |
 | `jsonschema [format] >= 4` | `jsonschema[format]>=4` |
-| `--user six` | `six` (with a warning) |
 | `picamera2; sys_platform == "linux"` | `picamera2` on Linux, dropped elsewhere |
 
 An entry that cannot be corrected stops pipInstall2 with exit code 11.
 
 ## Not supported
 
-These pip requirements-file features are not supported. An entry using any of them stops pipInstall2 with exit code 11 (invalid entry):
+pip options are not supported, in requirements files or in `sbcPythonDependencies`. The only entries that start with `-` are pipInstall2's own [special entries](#special-entries) (`--verbose`, `--clear`, `--python...`).
 
-- Options such as `-r other.txt`, `-c constraints.txt`, `-e .`, `--index-url`, `--extra-index-url`, `--pre`
-- Per-package options such as `--hash=sha256:...`
+An entry that contains a pip option, at the start (e.g. `-r other.txt`) or after a package (e.g. `numpy --hash=sha256:...`), stops pipInstall2 with exit code 11. This is checked while the entries are read, before the venv is created or anything is installed. The log names the option and where it was found, e.g.:
+
+```text
+"--extra-index-url https://www.piwheels.org/simple" (requirements.txt line 3):
+pip option "--extra-index-url" is not supported - see "Not supported" in special_cases.md
+Package sources (indexes) cannot be set by a plugin - they are set for the whole system in /etc/pip.conf (Raspberry Pi OS already adds piwheels there)
+```
+
+The options are excluded for these reasons:
+
+| Option | Why it is not supported | Instead |
+| --- | --- | --- |
+| `-i` / `--index-url`, `--extra-index-url`, `--no-index`, `-f` / `--find-links`, `--trusted-host` | They would let a plugin make pip download packages from any server. With `--extra-index-url`, a package with the same name on another server can be installed instead of the real one (dependency confusion). | Package sources are set for the whole system in `/etc/pip.conf`. Raspberry Pi OS already adds piwheels there. |
+| `-r other.txt` | Requirements files including other requirements files is not implemented. | List each requirements file in `sbcPythonDependencies`, e.g. `["requirements.txt", "camera.txt"]`. |
+| `-c constraints.txt` | Not implemented. | Put the version condition on the package itself, e.g. `numpy<2`. |
+| `-e .` / `--editable` | Would install the plugin's own source code (or any folder) as a package. | Not needed - the plugin's python files are run from its `dsf` folder. |
+| `--pre` | Allows pre-releases of every package, including dependencies. | Write a pre-release in the condition of the one package that needs it, e.g. `dsf-python>=3.7.0b1` - pip then accepts pre-releases for that package. See [Version numbers](#version-numbers-pre-releases-and-post-releases). |
+| `--hash=...` | If one package has a hash, pip requires a hash for every package, including dependencies, which breaks the combined install. | Use an exact version, e.g. `numpy==1.26.4`. |
+| `--user` | Installs into the user's own folder outside the venv. pip refuses it inside a venv, and every package is installed in the plugin's venv anyway. | Remove it - e.g. `--user dsf-python` becomes `dsf-python`. |
+| `--only-binary`, `--no-binary`, `--prefer-binary` | `--prefer-binary` is always used. The others would apply to every package. | - |
+| Any other option (e.g. `--no-deps`, `--upgrade`, `--global-option`) | pipInstall2 decides how pip is run. | - |
+
+These are not supported either, and also stop pipInstall2 with exit code 11:
+
 - Direct URL references such as `name @ https://.../file.whl` (use `git+` for git repositories)
 - Lines continued with `\`
 
